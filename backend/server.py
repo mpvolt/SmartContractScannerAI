@@ -9,7 +9,7 @@ CORS(app, resources={r"/analyze": {"origins": "http://localhost:3000"}})
 
 # Set your OpenAI API key
 client = openai.OpenAI(api_key="")
-SLITHER_PATH = "/Users/matt/Documents/SmartContractScannerAI/backend/venv/bin/slither"  # Change this to your Slither path
+SLITHER_PATH = ""  # Change this to your Slither path
 
 def run_slither(contract_path):
     """Runs Slither on a Solidity contract and returns vulnerabilities."""
