@@ -8,7 +8,7 @@ app = Flask(__name__)
 CORS(app, resources={r"/analyze": {"origins": "http://localhost:3000"}})
 
 # Set your OpenAI API key
-client = openai.OpenAI(api_key="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")
+client = openai.OpenAI(api_key="")
 SLITHER_PATH = "/Users/matt/Documents/SmartContractScannerAI/backend/venv/bin/slither"  # Change this to your Slither path
 
 def run_slither(contract_path):
