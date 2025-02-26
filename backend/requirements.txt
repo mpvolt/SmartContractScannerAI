@@ -1,0 +1,8 @@
+flask
+flask-cors
+openai
+slither-analyzer
+solc-select
+gunicorn  # For production deployment (optional)
+python-dotenv  # Load environment variables (optional)
+flask-cors

@@ -1,0 +1,90 @@
+/* SolidityScanner.css */
+body {
+    background-color: #1e1e2e;
+    font-family: Arial, sans-serif;
+    color: white;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+  }
+  
+  .container {
+    width: 90%;
+    max-width: 800px;
+    background-color: #2a2a3a;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+    text-align: center;
+    overflow: hidden;
+  }
+  
+  h2 {
+    font-size: 24px;
+    margin-bottom: 20px;
+  }
+  
+  label {
+    display: block;
+    font-weight: bold;
+    margin-bottom: 5px;
+  }
+  
+  input,
+  textarea {
+    width: 100%;
+    padding: 10px;
+    margin-bottom: 15px;
+    border: 1px solid #555;
+    border-radius: 5px;
+    background-color: #3b3b4f;
+    color: white;
+  }
+  
+  textarea {
+    height: 150px;
+    resize: none;
+  }
+  
+  button {
+    width: 100%;
+    background-color: #007bff;
+    border: none;
+    padding: 12px;
+    color: white;
+    font-weight: bold;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background 0.3s;
+  }
+  
+  button:hover {
+    background-color: #0056b3;
+  }
+  
+  button:disabled {
+    background-color: gray;
+    cursor: not-allowed;
+  }
+  
+  .error {
+    background-color: #dc3545;
+    color: white;
+    padding: 10px;
+    border-radius: 5px;
+    margin-bottom: 15px;
+  }
+  
+  .result {
+    background-color: #222233;
+    padding: 15px;
+    border-radius: 5px;
+    text-align: left;
+    max-height: 300px;
+    overflow-y: auto;
+    font-size: 14px;
+  }
+  
