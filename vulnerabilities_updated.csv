@@ -209,7 +209,11 @@ if account.last_txn == ctx.instruction_context.transaction_context.transaction_i
 process_transfer(&mut account, amount);
 
 account.last_txn = ctx.instruction_context.transaction_context.transaction_id;",High,"The secure code tracks the last transaction ID, rejecting replays if it matches the current one, and updates it post-transfer. This prevents attackers from reusing signed instructions, ensuring transaction uniqueness.",,Medium
-Sol-019,"The vulnerability arises from unchecked arithmetic operations in smart contracts, which can lead to overflows or underflows in Rust's release mode, allowing attackers to manipulate balances or other critical values.",Error fetching AI explanation: list index out of range,"rust
+Sol-019,"The vulnerability arises from unchecked arithmetic operations in smart contracts, which can lead to overflows or underflows in Rust's release mode, allowing attackers to manipulate balances or other critical values.","fn main() {
+    let mut balance: u64 = 10;
+    balance -= 20;
+    println!(""Balance: {}"", balance);
+}","rust
 fn main() {
     let balance: u64 = 10;
     let new_balance = balance
@@ -412,7 +416,57 @@ pub fn process_withdraw(program_id: &Pubkey, accounts: &[AccountInfo], amount: u
 
     Ok(())
 }",Critical,"Make sure we check that the program we are invoking is, in fact, the one we want",,Medium
-Sol-025,The vulnerability arises when an account type is not the one expected by the program,Error fetching AI explanation: list index out of range,"rust
+Sol-025,The vulnerability arises when an account type is not the one expected by the program,"// ------- Account Types --------
+pub struct Config {
+    pub admin: Pubkey,
+    pub fee: u32,
+    pub user_count: u32,
+}
+
+pub struct User {
+    pub user_authority: Pubkey,
+    pub balance: u64,
+}
+
+// ------- Helper functions --------
+fn unpack_config(account: &AccountInfo) -> Result<Config, ProgramError> {
+    let config: Config = deserialize(&mut account.data.borrow())?;
+    Ok(config)
+}
+
+// ------- Contract Instructions ---------
+fn create_user(program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
+    let account_iter = &mut accounts.iter();
+    let user = next_account_info(account_iter)?;
+    // ...
+    // Initialize a User struct, set user_authority
+    // to user and set balance to 0
+    // ...
+    Ok(())
+}
+
+fn withdraw_tokens(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    amount: u64,
+) -> ProgramResult {
+    let account_iter = &mut accounts.iter();
+    let vault = next_account_info(account_iter)?;
+    let admin = next_account_info(account_iter)?;
+    let config = unpack_config(next_account_info(account_iter)?)?;
+    let vault_authority = next_account_info(account_iter)?;
+
+    if config.owner != *program_id {
+        return Err(ProgramError::InvalidConfigAccount);
+    }
+    if config.admin != *admin.key {
+        return Err(ProgramError::InvalidAdminAccount);
+    }
+    // ...
+    // Transfer funds from vault to admin using vault_authority
+    // ...
+    Ok(())
+}","rust
 // ------- Account Types -------- 
 pub struct Config { 
     pub TYPE: u8, // <-- should contain a unique identifier for this account type 
@@ -2657,7 +2711,7 @@ pub fn liquidity_to_collateral(&self, liquidity_amount: u64) -> Result<u64, Prog
     self.decimal_liquidity_to_collateral(liquidity_amount.into())?
         .try_floor_u64()
 }",High,"Use of decimal_liquidity_to_collateral (instead of direct multiplication): Fix: Instead of performing a direct multiplication and rounding in the original code, the new implementation calls decimal_liquidity_to_collateral. This suggests that the conversion logic has been refined to handle decimal precision more appropriately. Why it's fixed: The method decimal_liquidity_to_collateral likely handles more complex calculations, such as decimals, and ensures the result is better handled with higher precision. This helps avoid potential issues with overflow or loss of precision that might occur when dealing with raw u64 operations. Use of try_floor_u64() for Rounding: Fix: The original code used try_round_u64() for rounding, while the updated code uses try_floor_u64(). The try_floor_u64() method ensures that the result is rounded down to the nearest whole number, effectively truncating any fractional values. Why it's fixed: Rounding down is often safer and more predictable than rounding to the nearest integer, especially when working with financial or mathematical calculations where fractional precision might lead to errors. try_floor_u64() explicitly truncates fractional results, preventing unexpected rounding behavior.",,Low
-Sol-056,,"rust
+Sol-056,"Description: The original code defines a Deposit struct for a Solana program using the Anchor framework, where deposit_account is an AccountInfo type marked as mutable (#[account(mut)]). However, there is no validation to ensure that deposit_account is a Program Derived Address (PDA) owned by the program. In Solana, PDAs are special accounts that are cryptographically derived from a program ID and specific seeds, ensuring they can only be controlled by the program that created them. Without PDA validation: Arbitrary Account Submission: An attacker could pass any account they control as the deposit_account, not necessarily one derived from the program's PDA logic. Ownership Risk: Since there's no check that deposit_account is owned by the program (via the owner field of AccountInfo), an attacker could potentially pass an account owned by a different program or a user-controlled keypair. Data Manipulation: If the program writes to deposit_account assuming it's a valid deposit storage account, an attacker could manipulate the data in an unexpected account, potentially leading to unintended behavior or state corruption. An attacker could: Pass a malicious account that they control, tricking the program into modifying an account that doesn't follow the expected deposit structure. If the program transfers lamports (SOL) or tokens to this account, the attacker could drain funds to an account they own. Cause denial-of-service by providing an invalid account that fails later checks in a way that halts program execution for legitimate users.","rust
 #[derive(Accounts)] 
 pub struct Deposit<'info> { 
     #[account(mut)] 
@@ -2689,8 +2743,8 @@ pub fn validate_pda(
     }
     
     Ok(())
-}",,,,Low
-Sol-057,,"rust
+}",High,"The fix introduces a validate_pda function that: Computes Expected PDA: Uses Pubkey::find_program_address with specific seeds (b""deposits"" and reserve_key) and the program_id to derive the expected PDA and its bump seed. Validates Address: Compares the provided deposit_account public key with the expected PDA. If they don't match, it returns an error (InvalidAccountData). Validates Bump: Ensures the provided bump seed matches the expected bump seed, preventing seed manipulation. Integration: While not shown in the fixed code snippet, this function would typically be called within the Deposit instruction handler, passing the deposit_account.key() and a bump value (likely from the Accounts context via Anchor's bump constraint).",,Medium
+Sol-057,"Description: The original code defines a Deposit struct for a Solana program using the Anchor framework, where deposit_account is an AccountInfo type marked as mutable (#[account(mut)]). However, there is no validation to ensure that deposit_account is a Program Derived Address (PDA) owned by the program. In Solana, PDAs are special accounts that are cryptographically derived from a program ID and specific seeds, ensuring they can only be controlled by the program that created them. Without PDA validation: Arbitrary Account Submission: An attacker could pass any account they control as the deposit_account, not necessarily one derived from the program's PDA logic. Ownership Risk: Since there's no check that deposit_account is owned by the program (via the owner field of AccountInfo), an attacker could potentially pass an account owned by a different program or a user-controlled keypair. Data Manipulation: If the program writes to deposit_account assuming it's a valid deposit storage account, an attacker could manipulate the data in an unexpected account, potentially leading to unintended behavior or state corruption. An attacker could: Pass a malicious account that they control, tricking the program into modifying an account that doesn't follow the expected deposit structure. If the program transfers lamports (SOL) or tokens to this account, the attacker could drain funds to an account they own. Cause denial-of-service by providing an invalid account that fails later checks in a way that halts program execution for legitimate users.","rust
 #[derive(Accounts)]
 pub struct Deposit<'info> {
     #[account(mut)]
@@ -2713,8 +2767,8 @@ pub struct Deposit<'info> {
         // ✅ Ensures bump seed correctness
     )]
     deposit_account: AccountInfo<'info>,
-}",,,,Low
-Sol-058,,"rust
+}",High,"The fixed version leverages Anchor's account validation attributes to enforce PDA constraints directly in the Accounts struct definition. Here’s how: Added seeds Constraint: seeds = [b""deposits"", reserve.key().as_ref()] What It Does: This specifies that deposit_account must be a PDA derived from the seeds ""deposits"" (a static byte string) and the reserve account's public key (reserve.key().as_ref()). Anchor uses this to compute the expected PDA using Pubkey::find_program_address(seeds, program_id) internally. Fix Impact: Ensures that only an account matching this exact PDA derivation can be passed as deposit_account. An attacker can no longer substitute an arbitrary account because the PDA must cryptographically match the program’s derivation logic. Added bump = bump Constraint: bump = bump What It Does: This ensures that the bump seed (a single byte added to the seeds to find a valid PDA off the ed25519 curve) matches the one Anchor derives during validation. The bump value is automatically provided by Anchor in the Context and stored in the bumps map (e.g., ctx.bumps.deposit_account). Fix Impact: Prevents an attacker from manipulating the bump seed to derive a different PDA that might still fall within the program's address space but not match the intended account. This locks down the exact PDA expected by the program. Integration with Anchor: By using Anchor’s #[account] macro with these constraints, the validation happens automatically when the instruction is processed. The Anchor runtime checks that: The deposit_account’s public key matches the PDA derived from the seeds and program ID. The bump seed is correct. If either check fails, the transaction is rejected with an error (typically ProgramError::InvalidSeeds or similar), before the instruction handler logic executes.",,Medium
+Sol-058,"Description: The original code defines a Deposit struct for a Solana program using the Anchor framework, where deposit_account is an AccountInfo type marked as mutable (#[account(mut)]). However, there is no validation to ensure that deposit_account is a Program Derived Address (PDA) owned by the program. In Solana, PDAs are special accounts that are cryptographically derived from a program ID and specific seeds, ensuring they can only be controlled by the program that created them. Without PDA validation: Arbitrary Account Submission: An attacker could pass any account they control as the deposit_account, not necessarily one derived from the program's PDA logic. Ownership Risk: Since there's no check that deposit_account is owned by the program (via the owner field of AccountInfo), an attacker could potentially pass an account owned by a different program or a user-controlled keypair. Data Manipulation: If the program writes to deposit_account assuming it's a valid deposit storage account, an attacker could manipulate the data in an unexpected account, potentially leading to unintended behavior or state corruption. An attacker could: Pass a malicious account that they control, tricking the program into modifying an account that doesn't follow the expected deposit structure. If the program transfers lamports (SOL) or tokens to this account, the attacker could drain funds to an account they own. Cause denial-of-service by providing an invalid account that fails later checks in a way that halts program execution for legitimate users.","rust
 #[derive(Accounts)]
 pub struct Deposit<'info> {
     #[account(mut)]
@@ -2736,7 +2790,7 @@ if deposit_account.key() != expected_pda {
 
 if provided_bump != expected_bump {
     return Err(ProgramError::InvalidAccountData);
-}",,,,Low
+}",High,"This fix manually validates the deposit_account as a PDA: PDA Derivation: let (expected_pda, expected_bump) = Pubkey::find_program_address(...) What It Does: Computes the expected PDA and its bump seed using the seeds ""deposits"" and reserve.key() with the program_id. This mirrors the logic Anchor uses internally. Fix Impact: Establishes a baseline for what deposit_account should be, ensuring it’s derived from the program’s logic. Address Validation: if deposit_account.key() != expected_pda { ... } What It Does: Compares the provided deposit_account’s public key with the expected PDA. If they don’t match, it returns an error. Fix Impact: Prevents an attacker from passing an arbitrary account by enforcing that deposit_account matches the program-derived address. Bump Validation: if provided_bump != expected_bump { ... } What It Does: Ensures the provided bump seed matches the one calculated during PDA derivation. Fix Impact: Prevents bump seed manipulation, ensuring the exact PDA intended by the program is used.",,Medium
 Sol-059,"The process to execute this exploit is as follows: 1. The admin creates a mint with an initial decimal value of 18 using the `MintCloseAuthority` extension, assigning the close authority to an address they control. 2. The admin uses the mint in the `InitONFT` resulting in 1e12 as a value of the `ld2sd_rate` (assuming 6 shared decimals). 3. With the mint supply still at 0, the admin then uses the close authority to close the mint account. 4. After the mint is closed, the admin can reinitialize a new mint at the same address, but this time with a reduced decimal value, such as 6. This manipulation of decimal values causes the `ld2sd_rate` to become inflated, as the program (ONFT) will still treat the mint as though it has 18 decimals while it actually operates with only 6 decimals. This mismatch leads to erroneous token calculations and can be used for various financial exploits. ### Example Exploits: * **Legitimate transfers treated as dust:**\ Assume a token with a value of $1, where 1 token equals `1e6` units (decimal of 6). An admin or attacker can send 100,000 tokens (with a total value of $1,000,000). Using the manipulated `ld2sd_rate`, the program with an inflated rate of `1e12`, causing the whole amount `1e11` (100 billion units) to dust due to `remove_dust`, meaning the tokens will not be sent as intended. * **Cross-chain Manipulation:**\ The attacker can initialize another `ONFT_config` with a different token escrow account, using the manipulated `ld2sd_rate` to transfer tokens from another chain (e.g., Ethereum) to Solana. The inflated rate on Solana causes the amount received to be much higher than intended. Once the tokens are transferred, the attacker switches the peer to the new `ONFT_config` using the correct (lower) rate and transfers the tokens back to the original chain, gaining an arbitrage-like advantage due to the discrepancy in the rates between the `ONFT_config` accounts.","pub fn encode( 
     send_to: [u8; 32], 
     amount_sd: u64, 
@@ -3008,7 +3062,84 @@ let fee_amount_context = CpiContext::new_with_signer(
     signer_seeds,
 );
 
-anchor_spl::token::transfer_checked(fee_amount_context, w_fee, 6)?;",,Critical,"To address this issue, it is recommended to correct the destination address so that the fee is sent to the fee vault account.",https://www.halborn.com/audits/vaultka/waterusdc-and-vaultka-solana-programs,Medium
+anchor_spl::token::transfer_checked(fee_amount_context, w_fee, 6)?;","use anchor_lang::prelude::*;
+use anchor_spl::token::{self, TransferChecked};
+
+// Assuming this is part of a larger program context
+#[program]
+pub mod waterusdc {
+    use super::*;
+
+    pub fn withdraw(ctx: Context<Withdraw>, amount: u64, w_fee: u64) -> Result<()> {
+        // Transfer the withdrawal amount (minus fee) to the user
+        let user_transfer_accounts = TransferChecked {
+            from: ctx.accounts.usdc_token_account.to_account_info(),
+            to: ctx.accounts.user_ata.to_account_info(),
+            authority: ctx.accounts.program_authority.to_account_info(),
+            mint: ctx.accounts.usdc_mint.to_account_info(),
+        };
+
+        let signer_seeds = &[/* Define your signer seeds here, e.g., &[b""authority"", &[bump]] */];
+        let user_amount_context = CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            user_transfer_accounts,
+            signer_seeds,
+        );
+
+        // Transfer the withdrawal amount (excluding fee) to the user
+        anchor_spl::token::transfer_checked(
+            user_amount_context,
+            amount.checked_sub(w_fee).ok_or(ProgramError::InvalidArgument)?,
+            6, // USDC decimals
+        )?;
+
+        // Transfer the fee to the fee vault
+        let fee_transfer_accounts = TransferChecked {
+            from: ctx.accounts.usdc_token_account.to_account_info(),
+            to: ctx.accounts.fee_vault.to_account_info(), // Changed to fee_vault
+            authority: ctx.accounts.program_authority.to_account_info(),
+            mint: ctx.accounts.usdc_mint.to_account_info(),
+        };
+
+        let fee_amount_context = CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            fee_transfer_accounts,
+            signer_seeds,
+        );
+
+        anchor_spl::token::transfer_checked(fee_amount_context, w_fee, 6)?;
+
+        Ok(())
+    }
+}
+
+#[derive(Accounts)]
+pub struct Withdraw<'info> {
+    /// The program's USDC token account holding the liquidity
+    #[account(mut)]
+    pub usdc_token_account: Account<'info, token::TokenAccount>,
+
+    /// The user's USDC ATA to receive the withdrawn amount (minus fee)
+    #[account(mut)]
+    pub user_ata: Account<'info, token::TokenAccount>,
+
+    /// The program's authority (likely a PDA) to sign the transfers
+    pub program_authority: Signer<'info>,
+
+    /// The USDC mint
+    pub usdc_mint: Account<'info, token::Mint>,
+
+    /// The fee vault to collect withdrawal fees
+    #[account(
+        mut,
+        constraint = fee_vault.mint == usdc_mint.key() @ ProgramError::InvalidAccountData,
+        constraint = fee_vault.owner == program_authority.key() @ ProgramError::InvalidAccountData
+    )]
+    pub fee_vault: Account<'info, token::TokenAccount>,
+
+    /// The SPL Token program
+    pub token_program: Program<'info, token::Token>,
+}",Critical,"To address this issue, it is recommended to correct the destination address so that the fee is sent to the fee vault account.",https://www.halborn.com/audits/vaultka/waterusdc-and-vaultka-solana-programs,Low
 Sol-066,"The RemoveApprovedLenders instruction allows the operator to remove an approved lender who will no longer be able to deposit. However, due to a lack of validation in the Deposit instruction, approved lenders who have been removed by the operator can still be able to deposit to keep earning yield and sharing looses.","rust
 pub struct Deposit<'info> {
     pub depositor: Signer<'info>,
@@ -3022,7 +3153,61 @@ pub struct Deposit<'info> {
         bump = lender_state.bump,
     )]
     pub lender_state: Box<Account<'info, LenderState>>,
-}",,Low,"To address this issue, it is recommended to add a call to preconditions::only_approved_lender to verify the lender who is trying to deposit is a current-approved lender.",https://www.halborn.com/audits/huma/huma-protocol,Medium
+}","use anchor_lang::prelude::*;
+
+// Constants (assumed from context)
+const LENDER_STATE_SEED: &[u8] = b""lender_state"";
+
+// Assumed LenderState struct
+#[account]
+pub struct LenderState {
+    pub bump: u8,
+    pub is_approved: bool, // Approval status
+    pub tranche_mint: Pubkey,
+    pub depositor: Pubkey,
+    // ... other fields as needed
+}
+
+pub mod preconditions {
+    use anchor_lang::prelude::*;
+
+    // Precondition to check if the lender is approved
+    pub fn only_approved_lender(lender_state: &LenderState) -> Result<()> {
+        if !lender_state.is_approved {
+            return Err(ProgramError::InvalidAccountData.into()); // Or a custom error
+        }
+        Ok(())
+    }
+}
+
+#[derive(Accounts)]
+pub struct Deposit<'info> {
+    pub depositor: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [
+            LENDER_STATE_SEED,
+            tranche_mint.key().as_ref(),
+            depositor.key().as_ref(),
+        ],
+        bump = lender_state.bump,
+    )]
+    pub lender_state: Box<Account<'info, LenderState>>,
+
+    // Assumed additional accounts (based on typical lending program structure)
+    pub tranche_mint: Account<'info, Mint>, // Mint of the tranche token
+    // ... other accounts like token accounts, authority, etc.
+}
+
+pub fn deposit(ctx: Context<Deposit>, amount: u64) -> Result<()> {
+    // Validate that the depositor is an approved lender
+    preconditions::only_approved_lender(&ctx.accounts.lender_state)?;
+
+    // Proceed with deposit logic
+    // ... (e.g., token transfers, updating lender_state, etc.)
+
+    Ok(())
+}",Low,"To address this issue, it is recommended to add a call to preconditions::only_approved_lender to verify the lender who is trying to deposit is a current-approved lender.",https://www.halborn.com/audits/huma/huma-protocol,Low
 Sol-067,"The create_pool instruction requires several parameters, one of which is the pool name. However, there is currently no validation to ensure that the length of the pool name does not exceed the maximum allowed limit, potentially leading to input that violates expected constraints.","pub(crate) fn create_pool( 
     ctx: Context<CreatePool>, 
     pool_id: Pubkey, 
@@ -3040,7 +3225,68 @@ Sol-067,"The create_pool instruction requires several parameters, one of which i
     pool_config.pool_owner = ctx.accounts.owner.key(); 
     pool_config.pool_name = pool_name.clone(); 
 
-}",,Low,"To address this issue, it is recommended to add a validation to verify the pool name provided to not exceed the MAX_POOL_NAME_LENGTH.",https://www.halborn.com/audits/huma/huma-protocol,Medium
+}","use anchor_lang::prelude::*;
+
+// Assume this constant is defined somewhere in the program
+const MAX_POOL_NAME_LENGTH: usize = 32; // Example value; adjust as needed
+
+#[derive(Accounts)]
+pub struct CreatePool<'info> {
+    #[account(
+        init,
+        payer = owner,
+        space = 8 + PoolConfig::SIZE, // Adjust size based on struct
+        seeds = [b""pool_config"", pool_id.as_ref()],
+        bump,
+    )]
+    pub pool_config: Account<'info, PoolConfig>,
+    pub huma_config: AccountInfo<'info>, // Assumed account
+    #[account(mut)]
+    pub owner: Signer<'info>,
+    pub pool_authority: AccountInfo<'info>, // Assumed PDA authority
+    pub system_program: Program<'info, System>,
+}
+
+// Assume this is the PoolConfig struct
+#[account]
+pub struct PoolConfig {
+    pub huma_config: Pubkey,
+    pub pool_id: Pubkey,
+    pub bump: u8,
+    pub pool_authority_bump: u8,
+    pub pool_owner: Pubkey,
+    pub pool_name: String,
+    // ... other fields
+}
+
+impl PoolConfig {
+    pub const SIZE: usize = 32 + 32 + 1 + 1 + 32 + 4 + MAX_POOL_NAME_LENGTH; // Example size
+}
+
+pub(crate) fn create_pool(
+    ctx: Context<CreatePool>,
+    pool_id: Pubkey,
+    pool_name: String,
+    pool_owner_treasury: Pubkey,
+    evaluation_agent: Pubkey,
+    tranches_policy_type: TranchesPolicyType,
+) -> Result<()> {
+    // Validate pool_name length
+    if pool_name.len() > MAX_POOL_NAME_LENGTH {
+        return Err(ProgramError::InvalidArgument.into()); // Or a custom error
+    }
+
+    let pool_config = ctx.accounts.pool_config.as_mut();
+    pool_config.huma_config = ctx.accounts.huma_config.key();
+    pool_config.pool_id = pool_id;
+    pool_config.bump = ctx.bumps.pool_config;
+    pool_config.pool_authority_bump = ctx.bumps.pool_authority;
+    pool_config.pool_owner = ctx.accounts.owner.key();
+    pool_config.pool_name = pool_name.clone();
+
+    // ... (rest of the logic, e.g., setting pool_owner_treasury, evaluation_agent, etc.)
+    Ok(())
+}",Low,"To address this issue, it is recommended to add a validation to verify the pool name provided to not exceed the MAX_POOL_NAME_LENGTH.",https://www.halborn.com/audits/huma/huma-protocol,Low
 Sol-068,"The CreateReceivable instruction requires some values as parameters, one of them is the currency code. However this value is not validated to check if its length exceeds the max length allowed.","rust
 receivable_info.set_inner(
     ReceivableInfo::new(
@@ -3051,7 +3297,91 @@ receivable_info.set_inner(
         args.maturity_date,
         ctx.accounts.owner.key(),
     ),
-);",,Low,"To resolve this issue, it is recommended to verify the correct maximal length of the currency code to be 3 bytes.",https://www.halborn.com/audits/huma/huma-protocol,Medium
+);","use anchor_lang::prelude::*;
+
+// Assume this constant defines the maximum length for currency_code
+const MAX_CURRENCY_CODE_LENGTH: usize = 3;
+
+// Assumed ReceivableInfo struct
+#[account]
+#[derive(Default)]
+pub struct ReceivableInfo {
+    pub bump: u8,
+    pub currency_code: String,
+    pub receivable_amount: u64,
+    pub created_at: i64,
+    pub maturity_date: i64,
+    pub owner: Pubkey,
+}
+
+impl ReceivableInfo {
+    pub fn new(
+        bump: u8,
+        currency_code: String,
+        receivable_amount: u64,
+        created_at: i64,
+        maturity_date: i64,
+        owner: Pubkey,
+    ) -> Self {
+        Self {
+            bump,
+            currency_code,
+            receivable_amount,
+            created_at,
+            maturity_date,
+            owner,
+        }
+    }
+}
+
+#[derive(Accounts)]
+pub struct CreateReceivable<'info> {
+    #[account(
+        init,
+        payer = owner,
+        space = 8 + ReceivableInfo::SIZE, // Adjust size based on struct
+        seeds = [b""receivable"", owner.key().as_ref()],
+        bump,
+    )]
+    pub receivable_info: Account<'info, ReceivableInfo>,
+    #[account(mut)]
+    pub owner: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+// Assumed arguments struct
+#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+pub struct CreateReceivableArgs {
+    pub currency_code: String,
+    pub receivable_amount: u64,
+    pub maturity_date: i64,
+}
+
+pub fn create_receivable(
+    ctx: Context<CreateReceivable>,
+    args: CreateReceivableArgs,
+) -> Result<()> {
+    // Validate currency_code length
+    if args.currency_code.len() > MAX_CURRENCY_CODE_LENGTH {
+        return Err(ProgramError::InvalidArgument.into()); // Or a custom error
+    }
+
+    let timestamp = Clock::get()?.unix_timestamp;
+
+    // Set the receivable info
+    ctx.accounts.receivable_info.set_inner(
+        ReceivableInfo::new(
+            ctx.bumps.receivable_info,
+            args.currency_code.clone(),
+            args.receivable_amount,
+            timestamp,
+            args.maturity_date,
+            ctx.accounts.owner.key(),
+        ),
+    );
+
+    Ok(())
+}",Low,"To resolve this issue, it is recommended to verify the correct maximal length of the currency code to be 3 bytes.",https://www.halborn.com/audits/huma/huma-protocol,Low
 Sol-069,The instruction CreateReceivable allows anyone to create a receivable NFT. The instruction requires also passing the PoolConfig and PoolState accounts and verifies that the pool is not disabled. However the instructions SubmitReceivable nor ApproveReceivable do not verify that the NFT is being approved for the same pool as it was created for. It is therefore possible to create Receivables for an arbitrary pool where the borrower has approved credit that is enabled and later submit or approve them for another pool.,"rust
 pub struct CreateReceivable<'info> {
     /// The address of the new receivable. 
@@ -3082,7 +3412,148 @@ pub struct CreateReceivable<'info> {
                bump = pool_state.bump, 
     )] 
     pub pool_state: Box<Account<'info, PoolState>>
-}",,Low,"To resolve this issue, it is recommended to either verify the correct pool also in both the SubmitReceivable and ApproveReceivable instructions, or, if the receivable is not meant to be tied to a specific pool, remove the PoolState and PoolConfig accounts from the CreateReceivable instruction.",https://www.halborn.com/audits/huma/huma-protocol,Medium
+}","use anchor_lang::prelude::*;
+
+// Constants (assumed)
+const HUMA_CONFIG_SEED: &[u8] = b""huma_config"";
+const POOL_CONFIG_SEED: &[u8] = b""pool_config"";
+const POOL_STATE_SEED: &[u8] = b""pool_state"";
+const HUMA_PROGRAM_AUTHORITY_SEED: &[u8] = b""huma_authority"";
+
+// Assumed structs
+#[account]
+pub struct HumaConfig {
+    pub id: Pubkey,
+    pub bump: u8,
+}
+
+#[account]
+pub struct PoolConfig {
+    pub pool_id: Pubkey,
+    pub bump: u8,
+    pub huma_config: Pubkey,
+    // ... other fields
+}
+
+#[account]
+pub struct PoolState {
+    pub bump: u8,
+    pub is_disabled: bool,
+    // ... other fields
+}
+
+#[account]
+pub struct ReceivableInfo {
+    pub pool_id: Pubkey, // Added to track the pool
+    pub owner: Pubkey,
+    pub bump: u8,
+    // ... other fields
+}
+
+// --- CreateReceivable ---
+#[derive(Accounts)]
+pub struct CreateReceivable<'info> {
+    #[account(mut)]
+    pub asset: Signer<'info>,
+    #[account(mut)]
+    pub owner: Signer<'info>,
+    #[account(seeds = [HUMA_PROGRAM_AUTHORITY_SEED], bump)]
+    pub huma_program_authority: UncheckedAccount<'info>,
+    #[account(
+        seeds = [HUMA_CONFIG_SEED, huma_config.id.as_ref()],
+        bump = huma_config.bump,
+    )]
+    pub huma_config: Box<Account<'info, HumaConfig>>,
+    #[account(
+        seeds = [POOL_CONFIG_SEED, pool_config.pool_id.as_ref()],
+        bump = pool_config.bump,
+        has_one = huma_config @ Error::InvalidHumaConfig,
+    )]
+    pub pool_config: Box<Account<'info, PoolConfig>>,
+    #[account(
+        seeds = [POOL_STATE_SEED, pool_config.key().as_ref()],
+        bump = pool_state.bump,
+        constraint = !pool_state.is_disabled @ Error::PoolDisabled,
+    )]
+    pub pool_state: Box<Account<'info, PoolState>>,
+    #[account(
+        init,
+        payer = owner,
+        space = 8 + 32 + 32 + 1, // Adjust size
+        seeds = [b""receivable"", asset.key().as_ref()],
+        bump,
+    )]
+    pub receivable_info: Account<'info, ReceivableInfo>,
+    pub system_program: Program<'info, System>,
+}
+
+pub fn create_receivable(ctx: Context<CreateReceivable>) -> Result<()> {
+    ctx.accounts.receivable_info.set_inner(ReceivableInfo {
+        pool_id: ctx.accounts.pool_config.pool_id,
+        owner: ctx.accounts.owner.key(),
+        bump: ctx.bumps.receivable_info,
+    });
+    Ok(())
+}
+
+// --- SubmitReceivable ---
+#[derive(Accounts)]
+pub struct SubmitReceivable<'info> {
+    pub owner: Signer<'info>,
+    #[account(
+        seeds = [b""receivable"", receivable_info.key().as_ref()],
+        bump = receivable_info.bump,
+    )]
+    pub receivable_info: Account<'info, ReceivableInfo>,
+    #[account(
+        seeds = [POOL_CONFIG_SEED, pool_config.pool_id.as_ref()],
+        bump = pool_config.bump,
+        constraint = pool_config.pool_id == receivable_info.pool_id @ Error::InvalidPool,
+    )]
+    pub pool_config: Box<Account<'info, PoolConfig>>,
+    // ... other accounts as needed
+}
+
+pub fn submit_receivable(ctx: Context<SubmitReceivable>) -> Result<()> {
+    // Pool validation is in the constraint
+    // ... submit logic
+    Ok(())
+}
+
+// --- ApproveReceivable ---
+#[derive(Accounts)]
+pub struct ApproveReceivable<'info> {
+    pub authority: Signer<'info>,
+    #[account(
+        seeds = [b""receivable"", receivable_info.key().as_ref()],
+        bump = receivable_info.bump,
+    )]
+    pub receivable_info: Account<'info, ReceivableInfo>,
+    #[account(
+        seeds = [POOL_CONFIG_SEED, pool_config.pool_id.as_ref()],
+        bump = pool_config.bump,
+        constraint = pool_config.pool_id == receivable_info.pool_id @ Error::InvalidPool,
+    )]
+    pub pool_config: Box<Account<'info, PoolConfig>>,
+    // ... other accounts as needed
+}
+
+pub fn approve_receivable(ctx: Context<ApproveReceivable>) -> Result<()> {
+    // Pool validation is in the constraint
+    // ... approve logic
+    Ok(())
+}
+
+// Assumed custom errors
+#[error_code]
+pub enum Error {
+    #[msg(""Invalid Huma config"")]
+    InvalidHumaConfig,
+    #[msg(""Pool is disabled"")]
+    PoolDisabled,
+    #[msg(""Receivable does not belong to this pool"")]
+    InvalidPool,
+}",Low,"To resolve this issue, it is recommended to either verify the correct pool also in both the SubmitReceivable and ApproveReceivable instructions, or, if the receivable is not meant to be tied to a specific pool, remove the PoolState and PoolConfig accounts from the CreateReceivable instruction.",https://www.halborn.com/audits/huma/huma-protocol,Low
 Sol-070,"The ReallocPoolConfig instruction allows both the huma owner and the pool owner to reallocate pools from the old format to the new format, adding a padding field and the auto_redemption_after_lockup flag in LPConfig. However, this instruction lacks a validation mechanism to determine the format of the provided pool_config. If a pool_config in the new format is supplied, the instruction still attempts to process it as if it were in the old format. The deserialization of the new format data into the old format structure does not fail because the fields shared between the two formats are located at the same positions in memory, and the additional fields in the new format (e.g., padding and auto_redemption_after_lockup) are ignored during the deserialization process. This behavior can cause misinterpretation of data if the additional bytes in the new format result in misaligned field values during deserialization. When the instruction subsequently writes back the data in the new format, the misinterpreted values from the deserialization process overwrite the original ones, leading to inconsistencies in the final pool_config. This vulnerability could result in corrupted or incorrect pool configurations, particularly when migrating or reallocating pools already in the new format, as the instruction fails to distinguish between the two formats","rust
 pub(crate) fn realloc_pool_config(ctx: Context<ReallocPoolConfig>) -> Result<()> { 
 
@@ -3093,7 +3564,90 @@ pub(crate) fn realloc_pool_config(ctx: Context<ReallocPoolConfig>) -> Result<()>
     }; 
 
     let pool_config_account = ctx.accounts.pool_config.to_account_info();
-}",,Low,"Although the likelihood of this occurring is very low because the responsibility for performing the reallocation lies with the huma owner and the pool owner, it is essential to carry out this operation with great care to avoid inconsistencies and potential failures. It is also advisable to add a validation mechanism in the instruction handler to ensure that the provided pool configuration is in the old format before proceeding.",https://www.halborn.com/audits/huma/huma-protocol,Medium
+}","use anchor_lang::prelude::*;
+
+// Constants (assumed)
+const POOL_CONFIG_SEED: &[u8] = b""pool_config"";
+
+// Old format (assumed)
+pub mod old_version {
+    use super::*;
+    #[account]
+    pub struct PoolConfig {
+        pub pool_id: Pubkey,
+        pub bump: u8,
+        // ... other fields without padding or auto_redemption_after_lockup
+    }
+
+    impl PoolConfig {
+        pub const SIZE: usize = 8 + 32 + 1; // Discriminator + Pubkey + u8 (example)
+    }
+}
+
+// New format (assumed)
+#[account]
+pub struct PoolConfig {
+    pub pool_id: Pubkey,
+    pub bump: u8,
+    pub padding: [u8; 32],               // Added in new format
+    pub auto_redemption_after_lockup: bool, // Added in new format
+    // ... other fields
+}
+
+impl PoolConfig {
+    pub const SIZE: usize = 8 + 32 + 1 + 32 + 1; // Adjusted for new fields
+}
+
+#[derive(Accounts)]
+pub struct ReallocPoolConfig<'info> {
+    #[account(
+        mut,
+        seeds = [POOL_CONFIG_SEED, pool_config.pool_id.as_ref()],
+        bump = pool_config.bump,
+    )]
+    pub pool_config: Account<'info, PoolConfig>, // Will be reallocated
+    #[account(mut)]
+    pub payer: Signer<'info>, // Huma owner or pool owner paying for realloc
+    pub system_program: Program<'info, System>,
+}
+
+pub(crate) fn realloc_pool_config(ctx: Context<ReallocPoolConfig>) -> Result<()> {
+    let pool_config_account = &mut ctx.accounts.pool_config;
+    let data: &[u8] = &mut pool_config_account.try_borrow_data()?;
+
+    // Validate that the pool_config is in the old format by checking its length
+    if data.len() != old_version::PoolConfig::SIZE {
+        return Err(Error::InvalidPoolConfigFormat.into());
+    }
+
+    // Deserialize the old format
+    let old_pool_config = {
+        let mut data_slice = &data[..];
+        let old_pool_config = old_version::PoolConfig::try_deserialize(&mut data_slice)?;
+        Box::new(old_pool_config)
+    };
+
+    // Reallocate to the new size
+    pool_config_account.realloc(PoolConfig::SIZE, false)?;
+
+    // Convert to new format and update
+    pool_config_account.set_inner(PoolConfig {
+        pool_id: old_pool_config.pool_id,
+        bump: old_pool_config.bump,
+        padding: [0; 32],                    // Initialize new field
+        auto_redemption_after_lockup: false, // Default value for new field
+        // ... copy other fields
+    });
+
+    Ok(())
+}
+
+// Custom errors
+#[error_code]
+pub enum Error {
+    #[msg(""Provided pool config is not in the old format"")]
+    InvalidPoolConfigFormat,
+}",Low,"Although the likelihood of this occurring is very low because the responsibility for performing the reallocation lies with the huma owner and the pool owner, it is essential to carry out this operation with great care to avoid inconsistencies and potential failures. It is also advisable to add a validation mechanism in the instruction handler to ensure that the provided pool configuration is in the old format before proceeding.",https://www.halborn.com/audits/huma/huma-protocol,Low
 Sol-071,"In the swap instruction, amount_out is calculated using the entire params.amount_in value, which represents the total number of input tokens provided by the user. The fees are calculated based on the params.amount_in and amount_out values. However, these fees are not subtracted from the user’s input before calculating the amount_out.  As a result, the user receives the full value of their input tokens converted to output tokens without the fees being deducted upfront. Nevertheless, the swap instruction still calculates the fee amount and subsequently distributes the fees after the amount is transferred to the user. This implies that the fees are taken from the pool’s funds rather than from the user’s input.  Effectively, this means the user is not bearing the cost of the fees. Over time, as more swaps are executed, the pool’s value diminishes because it continuously pays out fees from its own funds. This gradual depletion results in an imbalance where the pool loses value, affecting the liquidity providers.","rust
 pub fn swap(ctx: Context<Swap>, params: &SwapParams) -> Result<()> { 
     // ...
@@ -3108,7 +3662,34 @@ pub fn swap(ctx: Context<Swap>, params: &SwapParams) -> Result<()> {
         )?, 
     }; 
     // ...
-}",,Critical,E n s u r e swap i n s t r u c t i o n c a l c u l a t e s a n d d e d u c t s t h e f e e a m o u n t f r o m amount_in b e f o r e c o n v e r t i n g t o amount_out t o k e n s a n d t r a n s f e r r i n g t o t h e u s e r .,https://solodit.cyfrin.io/issues/unauthorized-owner-modification-ottersec-none-adrena-pdf,Medium
+}","pub fn swap(ctx: Context<Swap>, params: &SwapParams) -> Result<()> { 
+    // ...
+    let fees_in_amount = match is_internal_swap { 
+        true => 0, 
+        false => pool.get_swap_in_fees(
+            token_id_in, 
+            params.amount_in, 
+            &receiving_custody, 
+            &received_token_price_high, 
+            &dispensing_custody,
+        )?, 
+    };
+    
+    // Calculate effective amount after deducting fees
+    let effective_amount_in = params.amount_in.checked_sub(fees_in_amount)
+        .ok_or(ProgramError::InvalidArgument)?;
+    
+    // Use effective_amount_in instead of params.amount_in for swap calculations
+    // ...
+}",Critical,"ensures that:
+
+Fees are properly deducted from the user's input amount
+
+The user bears the cost of the fees rather than the pool
+
+The pool's value is preserved as fees are taken from the user's input before the swap
+
+The original vulnerability where fees were effectively paid from pool funds is fixed",https://solodit.cyfrin.io/issues/unauthorized-owner-modification-ottersec-none-adrena-pdf,Low
 Sol-072,"The remove_liquidity instruction contains a potential vulnerability that may result in an artificial inflation of custody.assets.owned. The function calculates the fee_amount based on the removal amount and pool configuration. In some cases, the code may temporarily increase the remove_liquidity fees stored in custody.fees.remove_liquidity if the price confidence value is high.  The code correctly subtracts the withdrawal amount from custody.assets.owned to reflect the decrease in owned assets due to the user receiving tokens. However, it then incorrectly adds the fee_amount back to custody.assets.owned. The fee_amount already represents a portion of the user’s original asset ownership that is taken as a fee. Adding it back essentially double-counts that portion, inflating the total owned assets.  The pool AUM (Assets Under Management) calculation, which considers total custody assets, may be skewed, resulting in inaccurate pool valuations. Among other uses, this affects the calculation of LP (Liquidity Provider) token values. Inflating the pool AUM also leads to an artificial increase in LP token value, allowing liquidity providers to withdraw more assets with their LP tokens than they are truly worth. Other calculations relying on custody.assets.owned may also be affected.  Proof of Concept: A user deposits 100 token A and is the only depositor of token A. The custody account correctly reflects 100 token A as owned assets. The user initiates a removal with 100 LP tokens, representing their entire 100 token A deposit. The function calculates a remove_liquidity fee of 10 token A. The user receives 90 token A after the fee is applied. The function correctly subtracts 90 token A from custody.assets.owned to reflect the user’s withdrawal. However, the function incorrectly adds the 10 token fee back to custody.assets.owned. As a result, custody now incorrectly shows 10 token A, even though the pool actually has zero.","rust
 pub fn remove_liquidity(
     ctx: Context<RemoveLiquidity>, 
@@ -3129,7 +3710,39 @@ pub fn remove_liquidity(
     } 
 
     [...] 
-}",,Critical,"I n s t e a d o f a d d i n g fee_amount b a c k t o custody.assets.owned , t h e c o d e s h o u l d t r e a t i t a s a l r e a d y a c c o u n t e d f o r w i t h i n t h e r e m a i n i n g o w n e d a s s e t s .",https://solodit.cyfrin.io/issues/unauthorized-owner-modification-ottersec-none-adrena-pdf,Medium
+}","pub fn remove_liquidity(
+    ctx: Context<RemoveLiquidity>, 
+    params: &RemoveLiquidityParams, 
+) -> Result<()> { 
+    // Update custody stats 
+    { 
+        [...] 
+
+        // The fee_amount is already included in the assets.owned calculation
+        // as part of the total assets, so we should NOT add it back here.
+        // The fee will be distributed later through the normal fee distribution mechanism.
+        
+        custody.update_borrow_rate(curtime)?;
+    } 
+
+    [...] 
+}",Critical,"Removed the line custody.assets.owned += fee_amount; which was causing the double-counting
+
+Added explanatory comments clarifying why we don't need to add the fee amount back
+
+Kept the borrow rate update as it's still needed for proper interest calculations
+
+This fix ensures that:
+
+The fee is properly accounted for in the initial withdrawal calculation
+
+The custody's assets.owned value accurately reflects the true remaining assets in the pool
+
+There's no artificial inflation of the pool's AUM
+
+LP token valuations remain accurate
+
+The fee distribution will still happen through the normal fee distribution mechanisms",https://solodit.cyfrin.io/issues/unauthorized-owner-modification-ottersec-none-adrena-pdf,Low
 Sol-073,"The remove_liquid_stake function checks if the amount to remove (params.amount) is greater than the overlap_amount (user_staking.liquid_stake.overlap_amount). However, since overlap_amount is set to zero before the subtraction, the entire params.amount is subtracted from total_stake, even though the overlap_amount was never added to total_stake in the first place.  This results in an incorrect reduction of total_stake, inflating the current round’s rate and delegating more rewards than allocated.  Additionally, the following else block should not decrease total_stake at all because, in this case, tokens are entirely removed from the overlapping amount, and the overlapping amount hasn’t been added to total_stake.  Currently, with this line of code present, whenever params.amount is less than overlap_amount, the instruction will fail. This happens because, in the other block, params.amount is subtracted from overlap_amount, resulting in a negative value.  This negative value is then subtracted from total_stake, which leads to an error, as subtracting a negative value from a u64 type results in an invalid operation.","rust
 pub fn remove_liquid_stake(
     ctx: Context<RemoveLiquidStake>, 
@@ -3145,7 +3758,53 @@ pub fn remove_liquid_stake(
             staking.current_staking_round.total_stake -= params.amount - user_staking.liquid_stake.overlap_amount; 
         } 
        // Rest of the code...
-   }",,Critical,"1 . S w i t c h t h e s e q u e n c e o f t h e s e t w o o p e r a t i o n s i n t h e if b l o c k , p e r f o r m i n g s u b t r a c t i o n f i r s t a n d t h e n s e t t i n g overlap_amount t o z e r o , e n s u r i n g t h a t o n l y t h e n o n - o v e r l a p p e d p o r t i o n o f params.amount i s s u b t r a c t e d f r o m total_stake . 2 . R e m o v e t h e o p e r a t o n o f d e c r e a s i n g t h e total_stake i n t h e else b l o c k",https://solodit.cyfrin.io/issues/unauthorized-owner-modification-ottersec-none-adrena-pdf,Medium
+   }","pub fn remove_liquid_stake(
+    ctx: Context<RemoveLiquidStake>, 
+    params: &RemoveLiquidStakeParams,
+) -> Result<()> { 
+    // In case of overlap, takes overlapped tokens first (last tokens put in staking)
+    // if there are not enough tokens, takes it up from long lasting staked tokens reserve
+    if params.amount > user_staking.liquid_stake.overlap_amount {
+        // First subtract the overlap amount from params.amount
+        let non_overlap_amount = params.amount - user_staking.liquid_stake.overlap_amount;
+        // Then subtract only the non-overlapped portion from total_stake
+        staking.current_staking_round.total_stake -= non_overlap_amount;
+        // Finally set overlap_amount to zero
+        user_staking.liquid_stake.overlap_amount = 0;
+    } else {
+        // Only subtract from overlap_amount, no need to modify total_stake
+        user_staking.liquid_stake.overlap_amount -= params.amount;
+    }
+    // Rest of the code...
+}",Critical,"Key fixes made:
+
+In the if block:
+
+First calculate the non-overlapped amount (params.amount - overlap_amount)
+
+Subtract only this non-overlapped portion from total_stake
+
+Then set overlap_amount to zero
+
+This ensures we only subtract from total_stake what wasn't in the overlap
+
+In the else block:
+
+Completely removed the line that was subtracting from total_stake
+
+Now only subtracts from overlap_amount since these tokens were never added to total_stake
+
+This fixes the following issues:
+
+Prevents incorrect reduction of total_stake when removing overlapped tokens
+
+Avoids potential arithmetic underflow/overflow issues
+
+Maintains accurate accounting of staked amounts
+
+Ensures proper reward distribution calculations
+
+Removes the problematic subtraction of a potentially negative value",https://solodit.cyfrin.io/issues/unauthorized-owner-modification-ottersec-none-adrena-pdf,Low
 Sol-074,"There is a potential vulnerability in the add_genesis_liquidity instruction related to the interaction between claim_reserved_grant_amount and sanity_check within GenesisLock.  The reserved_grant_amounts variable stores the initial allocated grant amount for each reserved grant recipient, while reserved_amount represents the total reserved grant pool amount. When a recipient claims their reserved grant, claim_reserved_grant_amount correctly reduces the corresponding element in reserved_grant_amounts. However, reserved_amount remains unchanged after a successful claim.  If at least one private (insider) grant owner claims their entire allocation, the reserved_amount will no longer reflect the actual available reserved funds. Despite this, the sanity_check in add_genesis_liquidity will still pass because the sum of the potentially depleted reserved_grant_amounts might coincidentally still equal the (outdated) reserved_amount.  This inconsistency allows users who claim public grants (after a private grant has already been claimed) to potentially receive more than intended, exceeding the total reserved pool amount.  ","rust
 pub fn sanity_check(&self) -> Result<()> { 
     [...] 
@@ -3165,7 +3824,52 @@ pub fn claim_reserved_grant_amount(&mut self, pubkey: &Pubkey, amount: u64) -> R
         } 
     } 
     Ok(0) 
-}",,High,M o d i f y sanity_check t o c o m p a r e t h e s u m o f reserved_grant_amounts w i t h reserved_amount m i n u s reserved_amount_claimed .,https://solodit.cyfrin.io/issues/unauthorized-owner-modification-ottersec-none-adrena-pdf,Medium
+}","pub struct GenesisLock {
+    // ... existing fields ...
+    reserved_amount: u64,
+    reserved_grant_amounts: [u64; Self::RESERVED_GRANTS_COUNT],
+    reserved_grant_owners: [Pubkey; Self::RESERVED_GRANTS_COUNT],
+    // New field to track claimed amounts
+    reserved_amount_claimed: u64,
+}
+
+pub fn sanity_check(&self) -> Result<()> { 
+    [...] 
+    if !self.has_transitioned_to_fully_public() { 
+        [...] 
+        let total_reserved_grant_amounts: u64 = self.reserved_grant_amounts.iter().sum();
+        require!(
+            total_reserved_grant_amounts == self.reserved_amount.saturating_sub(self.reserved_amount_claimed),
+            AdrenaError::InvalidGenesisLockState
+        ); 
+    } 
+    Ok(())
+}
+
+pub fn claim_reserved_grant_amount(&mut self, pubkey: &Pubkey, amount: u64) -> Result<u64> { 
+    [...] 
+    for i in 0..Self::RESERVED_GRANTS_COUNT { 
+        let amount_available = self.reserved_grant_amounts[i]; 
+        if amount <= amount_available && self.reserved_grant_owners[i] == *pubkey { 
+            self.reserved_grant_amounts[i] -= amount; 
+            self.reserved_amount_claimed = self.reserved_amount_claimed.saturating_add(amount);
+            return Ok(amount); 
+        } 
+    } 
+    Ok(0) 
+}",High,"This fix ensures that:
+
+The total reserved pool is properly accounted for
+
+Claims are tracked separately from allocations
+
+The sanity check properly validates available funds
+
+No arithmetic overflows/underflows can occur
+
+Public grant recipients can't claim more than intended
+
+The system maintains accurate accounting throughout its lifecycle",https://solodit.cyfrin.io/issues/unauthorized-owner-modification-ottersec-none-adrena-pdf,Low
 Sol-075,"There is an inconsistency in how fees are determined based on the stability of tokens within the swap mechanism.  In the swap instruction logic, a specific adjustment is made if a token is high-confidence. If receiving_custody is a stable token, then fees.stable_swap_in is directly modified to potentially increase the fee.  In contrast, pool::get_swap_fees determines a stable_swap flag based on whether both custody tokens (custody_in and custody_out) are stable. This stable_swap flag then dictates whether to utilize fees.stable_swap_in or fees.swap_in for calculating fees.  Thus, while the swap instruction correctly adjusts fees based on the stability of the receiving token (fees.stable_swap_in), get_swap_fees uses a broader criterion. If a high-confidence token (receiving_custody) is involved in a swap where get_swap_fees utilizes fees.stable_swap_in (which may not have been adjusted), the calculated fee may not reflect the intended higher fee associated with high-confidence tokens.","rust
 pub fn swap(ctx: Context<Swap>, params: &SwapParams) -> Result<()> {
     // If the confidence_value is too high, 
@@ -3203,7 +3907,80 @@ pub fn get_swap_fees (
 ) -> Result<(u64, u64)> {
     let stable_swap = custody_in.is_stable() && custody_out.is_stable();
     //...
-}",,High,E n s u r e t h a t f e e c a l c u l a t i o n s a c r o s s d i f f e r e n t p a r t s o f t h e s y s t e m a r e c o n s i s t e n t a n d r e f l e c t t h e i n t e n d e d f e e s t r u c t u r e b a s e d o n t o k e n s t a b i l i t y .,https://solodit.cyfrin.io/issues/unauthorized-owner-modification-ottersec-none-adrena-pdf,Medium
+}","pub fn swap(ctx: Context<Swap>, params: &SwapParams) -> Result<()> {
+    // Determine if we should use stable swap fees based on both tokens' stability
+    let use_stable_fees = receiving_custody.is_stable() && dispensing_custody.is_stable();
+    
+    let (high_confidence_value_protection_activated_in, 
+         high_confidence_value_protection_activated_out) = {
+        
+        let high_confidence_value_protection_activated_in = 
+            if (nominal_swap_in_fee == 0 && received_token_price.conf > 50) 
+                || (nominal_swap_in_fee != 0 && received_token_price.conf > nominal_swap_in_fee as u64) {
+                //...
+            };
+        
+        let fee = if use_stable_fees {
+            &mut receiving_custody.fees.stable_swap_in
+        } else {
+            &mut receiving_custody.fees.swap_in
+        };
+        //...
+    };
+    //...
+}
+
+pub fn get_swap_fees(
+    &self, 
+    token_id_in: usize, 
+    token_id_out: usize, 
+    amount_in: u64, 
+    amount_out: u64,
+    custody_in: &Custody,
+    token_price_in: &OraclePrice,
+    custody_out: &Custody,
+    token_price_out: &OraclePrice,
+) -> Result<(u64, u64)> {
+    // Use the same stability criteria as in swap()
+    let stable_swap = custody_in.is_stable() && custody_out.is_stable();
+    //...
+}",High,"Key improvements:
+
+Consistent Stability Check:
+
+Both swap() and get_swap_fees() now use the same criteria for determining stable swaps (custody_in.is_stable() && custody_out.is_stable())
+
+This ensures fee calculations are consistent across the system
+
+Single Source of Truth:
+
+The stability determination logic is now identical in both functions
+
+Removes the inconsistency where one function looked at just the receiving token while the other looked at both tokens
+
+Maintained High-Confidence Protection:
+
+The high-confidence value protection logic remains intact
+
+Still applies to the appropriate fee structure based on the now-consistent stability determination
+
+Clearer Code Structure:
+
+The use_stable_fees variable in swap() makes the intention clearer
+
+Matches the stable_swap variable naming in get_swap_fees()
+
+This fix ensures that:
+
+Fee calculations are consistent throughout the system
+
+High-confidence tokens are properly protected
+
+The intended fee structure is always applied correctly
+
+Both swap directions (in and out) are treated consistently
+
+The protocol's economic model works as designed",https://solodit.cyfrin.io/issues/unauthorized-owner-modification-ottersec-none-adrena-pdf,Low
 Sol-076,"In the current implementation of pool::get_fee, final_fee is calculated by taking the maximum value between the sum of fee_adjustment and base_fee, and zero. If fee_adjustment is a negative value (smaller than the negative of base_fee), the max function will return zero, and no fees will be charged.  If a user has high confidence about the price of a particular token in the pool, they may strategically add or remove a small amount of the token. This manipulation may slightly deviate the token’s ratio from the target. Due to the current implementation, if the calculated fee_adjustment is a minuscule negative value (due to the small change in the ratio), the final fee will be zero.  As a result, the user may:  Add tokens to the pool at a lower price than they believe is fair (since the price is based on the pool’s ratio), essentially buying at a discount. Remove tokens from the pool at a higher price than they believe is fair, profiting from the imbalanced ratio. Fees are meant to incentivize users to add or remove tokens in a way that maintains the target ratios for each token within the pool. By allowing users to avoid fees through minor manipulations, the system may become imbalanced, causing significant deviations from the target ratios over time.","rust
 fn get_fee( [...] ) -> Result<u64> {
     [...] 
@@ -3217,7 +3994,42 @@ fn get_fee( [...] ) -> Result<u64> {
         std::cmp::max(fee_adjustment + base_fee, 0)
     )?;
     [...] 
-}",, High,"U t i l i z e t h e m a x i m u m v a l u e b e t w e e n fee_adjustment + base_fee a n d base_fee i n s t e a d o f z e r o . T h i s e n s u r e s t h a t e v e n i f t h e fee_adjustment i s n e g a t i v e , t h e r e w i l l a l w a y s b e a m i n i m u m f e e c h a r g e d , w h i c h i s t h e base_fee ",https://solodit.cyfrin.io/issues/unauthorized-owner-modification-ottersec-none-adrena-pdf,Medium
+}","fn get_fee( [...] ) -> Result<u64> {
+    [...] 
+    let fee_adjustment: i64 = (
+        (slope_numerator * new_ratio) + 
+        (fee_min * slope_denominator) - 
+        (target_ratio * slope_numerator)
+    ) / slope_denominator;
+
+    // Ensure we always charge at least the base_fee
+    let final_fee = math::checked_as_u16(
+        std::cmp::max(fee_adjustment + base_fee, base_fee)
+    )?;
+    [...] 
+}", High,"Minimum Fee Guarantee:
+
+Changed max(..., 0) to max(..., base_fee)
+
+Ensures the protocol always collects at least the base_fee regardless of adjustment
+
+Prevents Fee Avoidance:
+
+Users can no longer strategically manipulate ratios to avoid fees entirely
+
+Maintains economic incentives for maintaining target ratios
+
+Preserves Dynamic Fee Logic:
+
+Still allows for dynamic fee adjustments above the base fee
+
+Maintains the original fee curve behavior for positive adjustments
+
+Same Safety Checks:
+
+Keeps the checked_as_u16 conversion for type safety
+
+Maintains all existing error handling",https://solodit.cyfrin.io/issues/unauthorized-owner-modification-ottersec-none-adrena-pdf,Low
 Sol-077,"The current implementation allows the input token mint to have a freeze authority, which can result in a potential denial of service (DoS) attack on the pool. If the input token mint’s freeze authority exercises control, the pool’s input token vault can be frozen, leading to a **permanent loss of funds** for users. This is a critical issue, as frozen token accounts cannot transfer tokens, rendering the pool inoperable. ","rust
 #[account(
     mint::token_program = token_program,
@@ -7236,7 +8048,117 @@ pub fn inner_withdraw_withheld_tokens_from_accounts(
             new_decryptable_available_balance: *new_decryptable_available_balance,
         },
     )) 
-}",Error fetching AI explanation: list index out of range,Low,Designate multi-signature accounts as signers for authorizing transactions.,"https://file.notion.so/f/f/97ab6450-64d1-4350-a5cf-a0c0c607f5c4/e21cbb09-5ce7-48c8-954e-5077c486a579/solana_token22_audit_final.pdf?table=block&id=88fc9b14-b183-49ee-aa0a-29c29c1eaf89&spaceId=97ab6450-64d1-4350-a5cf-a0c0c607f5c4&expirationTimestamp=1742961600000&signature=H_I1MmWaBTT1ZTabCmBV6FDaHowAV7WGiNbDzY0_3Yc&downloadName=solana_token22_audit_final.pdf, https://github.com/solana-labs/solana-program-library/pull/5900/files",High
+}","/// Create an inner `WithdrawWithheldTokensFromMint` instruction
+///
+/// This instruction is suitable for use with a cross-program `invoke`
+pub fn inner_withdraw_withheld_tokens_from_mint(
+    token_program_id: &Pubkey,
+    mint: &Pubkey,
+    destination: &Pubkey,
+    new_decryptable_available_balance: &DecryptableBalance,
+    authority: &Pubkey,
+    multisig_signers: &[&Pubkey],
+    proof_data_location: ProofLocation<CiphertextCiphertextEqualityProofData>,
+) -> Result<Instruction, ProgramError> {
+    check_program_account(token_program_id)?;
+    
+    let mut accounts = vec![
+        AccountMeta::new(*mint, false),
+        AccountMeta::new(*destination, false),
+    ];
+
+    let proof_instruction_offset = match proof_data_location {
+        ProofLocation::InstructionOffset(proof_instruction_offset, _) => {
+            accounts.push(AccountMeta::new_readonly(sysvar::instructions::id(), false));
+            proof_instruction_offset.into()
+        }
+        ProofLocation::ContextStateAccount(context_state_account) => {
+            accounts.push(AccountMeta::new_readonly(*context_state_account, false));
+            0
+        }
+    };
+
+    accounts.push(AccountMeta::new_readonly(
+        *authority,
+        multisig_signers.is_empty(),
+    ));
+
+    for multisig_signer in multisig_signers.iter() {
+        accounts.push(AccountMeta::new_readonly(**multisig_signer, true));
+    }
+
+    Ok(encode_instruction(
+        token_program_id,
+        accounts,
+        TokenInstruction::ConfidentialTransferFeeExtension,
+        ConfidentialTransferFeeInstruction::WithdrawWithheldTokensFromMint,
+        &WithdrawWithheldTokensFromMintData {
+            proof_instruction_offset,
+            new_decryptable_available_balance: *new_decryptable_available_balance,
+        },
+    ))
+}
+
+/// Create an inner `WithdrawWithheldTokensFromMint` instruction
+///
+/// This instruction is suitable for use with a cross-program `invoke`
+#[allow(clippy::too_many_arguments)]
+pub fn inner_withdraw_withheld_tokens_from_accounts(
+    token_program_id: &Pubkey,
+    mint: &Pubkey,
+    destination: &Pubkey,
+    new_decryptable_available_balance: &DecryptableBalance,
+    authority: &Pubkey,
+    multisig_signers: &[&Pubkey],
+    sources: &[&Pubkey],
+    proof_data_location: ProofLocation<CiphertextCiphertextEqualityProofData>,
+) -> Result<Instruction, ProgramError> {
+    check_program_account(token_program_id)?;
+
+    let num_token_accounts = u8::try_from(sources.len())
+        .map_err(|_| ProgramError::InvalidInstructionData)?;
+
+    let mut accounts = vec![
+        AccountMeta::new(*mint, false),
+        AccountMeta::new(*destination, false),
+    ];
+
+    let proof_instruction_offset = match proof_data_location {
+        ProofLocation::InstructionOffset(proof_instruction_offset, _) => {
+            accounts.push(AccountMeta::new_readonly(sysvar::instructions::id(), false));
+            proof_instruction_offset.into()
+        }
+        ProofLocation::ContextStateAccount(context_state_account) => {
+            accounts.push(AccountMeta::new_readonly(*context_state_account, false));
+            0
+        }
+    };
+
+    accounts.push(AccountMeta::new_readonly(
+        *authority,
+        multisig_signers.is_empty(),
+    ));
+
+    for multisig_signer in multisig_signers.iter() {
+        accounts.push(AccountMeta::new_readonly(**multisig_signer, true));
+    }
+
+    for source in sources.iter() {
+        accounts.push(AccountMeta::new(**source, false));
+    }
+
+    Ok(encode_instruction(
+        token_program_id,
+        accounts,
+        TokenInstruction::ConfidentialTransferFeeExtension,
+        ConfidentialTransferFeeInstruction::WithdrawWithheldTokensFromAccounts,
+        &WithdrawWithheldTokensFromAccountsData {
+            proof_instruction_offset,
+            num_token_accounts,
+            new_decryptable_available_balance: *new_decryptable_available_balance,
+        },
+    ))
+}",Low,Designate multi-signature accounts as signers for authorizing transactions.,"https://file.notion.so/f/f/97ab6450-64d1-4350-a5cf-a0c0c607f5c4/e21cbb09-5ce7-48c8-954e-5077c486a579/solana_token22_audit_final.pdf?table=block&id=88fc9b14-b183-49ee-aa0a-29c29c1eaf89&spaceId=97ab6450-64d1-4350-a5cf-a0c0c607f5c4&expirationTimestamp=1742961600000&signature=H_I1MmWaBTT1ZTabCmBV6FDaHowAV7WGiNbDzY0_3Yc&downloadName=solana_token22_audit_final.pdf, https://github.com/solana-labs/solana-program-library/pull/5900/files",High
 Sol-105,"BatchedRangeProofU128Data::new creates a new BatchedRangeProofU128Data instance, which includes generating a batched range proof for a set of commitments, values, bit lengths, and openings. It performs validation to ensure that the sum of bit lengths is 128 (128 bits in a 128-bit value), and it checks for potential overflows during bit length calculations. It is similar in BatchedRangeProofU256Data::new. In BatchedRangeProofU128Data::new, a calculation of batched_bit_length represents the total number of bits required to represent the batched range of values. This calculation is performed by iterating through the the bit_lengths vector and summing all the bit lengths. The issue is related to the potential of right shift operations (>>) causing an overflow panic when dealing with u128 and u256 range proofs, especially when elements in the bit_lengths vector are greater than 64. This occurs as bit lengths are not validated, as shown in BatchedRangeProofU128Data::new above. Proof of Concept 1. The protocol accepts a list of commitments that is less than or equal to MAX_COMMITMENTS. 2. Suppose we need to create a batched u128 range proof for a set of 3 commitments where one commitment has a bit length greater than 64. 3. Here is a simplified example of such data: let bit_lengths = vec![70, 30, 28]; 4. In this case, the bit_lengths vector contains three elements: 70, 30, and 28. 5. When the batched_bit_length is calculated, it will sum up these values: let batched_bit_length = 70 + 30 + 28; 6. The value of batched_bit_length will be 128, which satisfies the u128 type, but the bit length for the first commitment is 70, which is greater than 64, which will cause a panic. 7. Attempting to perform a right shift operation (>>) on this element would cause an overflow panic as u128 may only represent values up to 2 128 − 1.","rust
 use {
     crate::{
@@ -7948,7 +8870,774 @@ pub mod liquidity_lockbox {
     }
 
     // ... Remaining functions left out for brevity
-}",Error fetching AI explanation: list index out of range,High,"After introduction of a liquidity_amount parameter in the deposit() function, it is ensured the a user receives the expected liquidity_amount of bridged tokens while only spending token_max_a of SOL and token_max_b of OLAS in the worst-case. As a consequence of those in- and output constraints, a user is sufficiently protected from a sandwich attack. Furthermore, the direct use of liquidity_amount, token_max_a and token_max_b with the underlying Whirlpool program led to obsolete code, which was previously used for the computation of the liquidity & token b amounts, that facilitated the sandwich attack in the first place. Consequently, the get_liquidity_from_token_a() function became obsolete too and was removed and therefore also resolved the Division before multiplication in liquidity_lockbox::get_liquidity_from_token_a(...) #50 issue. In addition, the approval of any unused SOL & OLAS tokens (not all of token_max_a/token_max_b used) is revoked (set to 0).",https://gist.github.com/MarioPoneder/b7f287884607958eda81f3419efbc1e8,High
+}","pub mod state;
+
+use anchor_lang::prelude::*;
+use anchor_spl::token::{self, Mint, Token, TokenAccount, Approve};
+use whirlpool::{
+    self,
+    state::{Whirlpool, TickArray, Position},
+    cpi::accounts::ModifyLiquidity,
+    cpi::accounts::UpdateFeesAndRewards,
+    cpi::accounts::CollectFees
+};
+use solana_program::{pubkey::Pubkey, program::invoke_signed};
+use spl_token::instruction::{burn_checked, mint_to};
+
+pub use state::*;
+
+declare_id!(""7ahQGWysExobjeZ91RTsNqTCN3kWyHGZ43ud2vB7VVoZ"");
+
+#[program]
+pub mod liquidity_lockbox {
+    use super::*;
+    use solana_program::pubkey;
+
+    // Program Id
+    const PROGRAM_ID: Pubkey = pubkey!(""7ahQGWysExobjeZ91RTsNqTCN3kWyHGZ43ud2vB7VVoZ"");
+
+    // Orca Whirlpool program address
+    const ORCA: Pubkey = pubkey!(""whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc"");
+
+    // OLAS-SOL Whirlpool address
+    const WHIRLPOOL: Pubkey = pubkey!(""5dMKUYJDsjZkAD3wiV3ViQkuq9pSmWQ5eAzcQLtDnUT3"");
+
+    // SOL address
+    const SOL: Pubkey = pubkey!(""So11111111111111111111111111111111111111112"");
+
+    // OLAS address
+    const OLAS: Pubkey = pubkey!(""Ez3nzG9ofodYCvEmw73XhQ87LWNYVRM2s7diB5tBZPyM"");
+
+    // Position account discriminator
+    const POSITION_HEADER: [u8; 8] = [0xaa, 0xbc, 0x8f, 0xe4, 0x7a, 0x40, 0xf7, 0xd0];
+
+    // Full range lower and upper indexes
+    const TICK_LOWER_INDEX: i32 = -443584;
+    const TICK_UPPER_INDEX: i32 = 443584;
+
+    // Bridged token decimals
+    const BRIDGED_TOKEN_DECIMALS: u8 = 8;
+
+    /// Initializes a Lockbox account that stores state data.
+    pub fn initialize(
+        ctx: Context<InitializeLiquidityLockbox>
+    ) -> Result<()> {
+        let whirlpool = ctx.accounts.position.whirlpool;
+        let position_mint = ctx.accounts.position.position_mint;
+        let liquidity = ctx.accounts.position.liquidity;
+        let tick_lower_index = ctx.accounts.position.tick_lower_index;
+        let tick_upper_index = ctx.accounts.position.tick_upper_index;
+
+        // Check the whirlpool
+        if whirlpool != WHIRLPOOL {
+            return Err(ErrorCode::WrongWhirlpool.into());
+        }
+
+        // Check the discriminator
+        let account = &ctx.accounts.position.to_account_info();
+        let data = account.try_borrow_data()?;
+        assert!(data.len() > 8);
+        let mut discriminator = [0u8; 8];
+        discriminator.copy_from_slice(&data[0..8]);
+        if discriminator != POSITION_HEADER {
+            return Err(ErrorCode::WrongPositionHeader.into());
+        }
+
+        // Check for the minimum liquidity in position
+        if liquidity != 0 {
+            return Err(ErrorCode::LiquidityNotZero.into());
+        }
+
+        // Check tick values
+        if tick_lower_index != TICK_LOWER_INDEX || tick_upper_index != TICK_UPPER_INDEX {
+            return Err(ErrorCode::OutOfRange.into());
+        }
+
+        // Check the PDA ownership
+        if ctx.accounts.position.to_account_info().owner != &ORCA {
+            return Err(ErrorCode::WrongOwner.into());
+        }
+
+        // Check the position PDA address correctness
+        let position_pda = Pubkey::find_program_address(
+            &[b""position"", position_mint.as_ref()],
+            &ORCA
+        );
+        if position_pda.0 != ctx.accounts.position.key() {
+            return Err(ErrorCode::WrongPositionPDA.into());
+        }
+
+        // Check that the first token mint is SOL
+        if ctx.accounts.fee_collector_token_owner_account_a.mint != SOL {
+            return Err(ErrorCode::WrongTokenMint.into());
+        }
+
+        // Check that the second token mint is OLAS
+        if ctx.accounts.fee_collector_token_owner_account_b.mint != OLAS {
+            return Err(ErrorCode::WrongTokenMint.into());
+        }
+
+        // Get the lockbox account
+        let lockbox = &mut ctx.accounts.lockbox;
+
+        // Get the anchor-derived bump
+        let bump = *ctx.bumps.get(""lockbox"").unwrap();
+
+        // Initialize lockbox account
+        lockbox.initialize(
+            bump,
+            ctx.accounts.bridged_token_mint.key(),
+            ctx.accounts.fee_collector_token_owner_account_a.key(),
+            ctx.accounts.fee_collector_token_owner_account_b.key(),
+            ctx.accounts.position.key(),
+            ctx.accounts.pda_position_account.key()
+        )?;
+
+        Ok(())
+    }
+
+    /// Deposits an NFT position under the Lockbox management and gets bridged tokens minted in return.
+    ///
+    /// ### Parameters
+    /// - `liquidity_amount` - Requested liquidity amount.
+    /// - `token_max_a` - Max amount of SOL token to be added for liquidity.
+    /// - `token_max_b` - Max amount of OLAS token to be added for liquidity.
+    pub fn deposit(
+        ctx: Context<DepositPositionForLiquidity>,
+        liquidity_amount: u64,
+        token_max_a: u64,
+        token_max_b: u64,
+    ) -> Result<()> {
+        // Check the initial token amounts
+        if token_max_a == 0 || token_max_b == 0 {
+            return Err(ErrorCode::LiquidityZero.into());
+        }
+
+        // Check the position account
+        if ctx.accounts.position.key() != ctx.accounts.lockbox.position {
+            return Err(ErrorCode::WrongPositionPDA.into());
+        }
+
+        // Check the position PDA address correctness
+        let position_pda = Pubkey::find_program_address(
+            &[b""position"", ctx.accounts.position.position_mint.as_ref()],
+            &ORCA
+        );
+        if position_pda.0 != ctx.accounts.position.key() {
+            return Err(ErrorCode::WrongPositionPDA.into());
+        }
+
+        // Check the lockbox PDA address correctness
+        let lockbox_pda = Pubkey::find_program_address(
+            &[b""liquidity_lockbox""],
+            &PROGRAM_ID
+        );
+        if lockbox_pda.0 != ctx.accounts.lockbox.key() {
+            return Err(ErrorCode::WrongLockboxPDA.into());
+        }
+
+        // Check the whirlpool
+        if ctx.accounts.whirlpool.key() != WHIRLPOOL {
+            return Err(ErrorCode::WrongWhirlpool.into());
+        }
+
+        // Check the Orca Whirlpool program address
+        if ctx.accounts.whirlpool_program.key() != ORCA {
+            return Err(ErrorCode::WrongOrcaAccount.into());
+        }
+
+        // Check that the first token mint is SOL
+        if ctx.accounts.token_owner_account_a.mint != SOL || 
+           ctx.accounts.token_vault_a.mint != SOL {
+            return Err(ErrorCode::WrongTokenMint.into());
+        }
+
+        // Check that the second token mint is OLAS
+        if ctx.accounts.token_owner_account_b.mint != OLAS || 
+           ctx.accounts.token_vault_b.mint != OLAS {
+            return Err(ErrorCode::WrongTokenMint.into());
+        }
+
+        // Check tick arrays owner
+        if ctx.accounts.tick_array_lower.to_account_info().owner != &ORCA || 
+           ctx.accounts.tick_array_upper.to_account_info().owner != &ORCA {
+            return Err(ErrorCode::WrongOwner.into());
+        }
+
+        // Calculate token deltas
+        let tick_index_lower = ctx.accounts.position.tick_lower_index;
+        let tick_index_upper = ctx.accounts.position.tick_upper_index;
+        let tick_index_current = ctx.accounts.whirlpool.tick_current_index;
+
+        // assuming InRange status
+        if tick_index_current < tick_index_lower || tick_index_upper <= tick_index_current {
+            return Err(ErrorCode::OutOfRange.into());
+        }
+
+        // Total liquidity update with the check
+        ctx.accounts.lockbox.total_liquidity = ctx.accounts.lockbox
+            .total_liquidity
+            .checked_add(liquidity_amount)
+            .unwrap_or_else(|| panic!(""Liquidity overflow""));
+
+        // Approve SOL tokens for the lockbox
+        token::approve(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                Approve {
+                    to: ctx.accounts.token_owner_account_a.to_account_info(),
+                    delegate: ctx.accounts.lockbox.to_account_info(),
+                    authority: ctx.accounts.signer.to_account_info(),
+ ragion: liquidity_lockbox {                },
+            ),
+            token_max_a,
+        )?;
+
+        // Approve OLAS tokens for the lockbox
+        token::approve(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                Approve {
+                    to: ctx.accounts.token_owner_account_b.to_account_info(),
+                    delegate: ctx.accounts.lockbox.to_account_info(),
+                    authority: ctx.accounts.signer.to_account_info(),
+                },
+            ),
+            token_max_b,
+        )?;
+
+        // Get lockbox signer seeds
+        let signer_seeds = &[&ctx.accounts.lockbox.seeds()[..]];
+
+        // CPI call to increase liquidity
+        let cpi_program_modify_liquidity = ctx.accounts.whirlpool_program.to_account_info();
+        let cpi_accounts_modify_liquidity = ModifyLiquidity {
+            whirlpool: ctx.accounts.whirlpool.to_account_info(),
+            position: ctx.accounts.position.to_account_info(),
+            position_authority: ctx.accounts.lockbox.to_account_info(),
+            position_token_account: ctx.accounts.pda_position_account.to_account_info(),
+            tick_array_lower: ctx.accounts.tick_array_lower.to_account_info(),
+            tick_array_upper: ctx.accounts.tick_array_upper.to_account_info(),
+            token_owner_account_a: ctx.accounts.token_owner_account_a.to_account_info(),
+            token_owner_account_b: ctx.accounts.token_owner_account_b.to_account_info(),
+            token_vault_a: ctx.accounts.token_vault_a.to_account_info(),
+            token_vault_b: ctx.accounts.token_vault_b.to_account_info(),
+            token_program: ctx.accounts.token_program.to_account_info(),
+        };
+        let cpi_ctx_modify_liquidity = CpiContext::new_with_signer(
+            cpi_program_modify_liquidity,
+            cpi_accounts_modify_liquidity,
+            signer_seeds
+        );
+        whirlpool::cpi::increase_liquidity(
+            cpi_ctx_modify_liquidity,
+            liquidity_amount as u128,
+            token_max_a,
+            token_max_b
+        )?;
+
+        // Mint bridged tokens in the amount of position liquidity
+        invoke_signed(
+            &mint_to(
+                ctx.accounts.token_program.key,
+                ctx.accounts.bridged_token_mint.to_account_info().key,
+                ctx.accounts.bridged_token_account.to_account_info().key,
+                ctx.accounts.lockbox.to_account_info().key,
+                &[ctx.accounts.lockbox.to_account_info().key],
+                liquidity_amount,
+            )?,
+            &[
+                ctx.accounts.bridged_token_mint.to_account_info(),
+                ctx.accounts.bridged_token_account.to_account_info(),
+                ctx.accounts.lockbox.to_account_info(),
+                ctx.accounts.token_program.to_account_info(),
+            ],
+            &[&ctx.accounts.lockbox.seeds()],
+        )?;
+
+        // Revoke approval for unused SOL tokens
+        token::approve(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                Approve {
+                    to: ctx.accounts.token_owner_account_a.to_account_info(),
+                    delegate: ctx.accounts.lockbox.to_account_info(),
+                    authority: ctx.accounts.signer.to_account_info(),
+                },
+            ),
+            0,
+        )?;
+
+        // Revoke approval for OLAS tokens
+        token::approve(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                Approve {
+                    to: ctx.accounts.token_owner_account_b.to_account_info(),
+                    delegate: ctx.accounts.lockbox.to_account_info(),
+                    authority: ctx.accounts.signer.to_account_info(),
+                },
+            ),
+            0,
+        )?;
+
+        emit!(DepositEvent {
+            signer: ctx.accounts.signer.key(),
+            position: ctx.accounts.position.key(),
+            deposit_liquidity: liquidity_amount,
+            total_liquidity: ctx.accounts.lockbox.total_liquidity
+        });
+
+        Ok(())
+    }
+
+    /// Withdraws a specified amount of liquidity for supplied bridged tokens.
+    ///
+    /// ### Parameters
+    /// - `amount` - Amount of bridged tokens corresponding to the position liquidity amount to withdraw.
+    /// - `token_min_a` - The minimum amount of SOL the signer is willing to withdraw.
+    /// - `token_min_b` - The minimum amount of OLAS the signer is willing to withdraw.
+    pub fn withdraw(
+        ctx: Context<WithdrawLiquidityForTokens>,
+        amount: u64,
+        token_min_a: u64,
+        token_min_b: u64
+    ) -> Result<()> {
+        // Check if there is any liquidity left in the Lockbox
+        if ctx.accounts.position.liquidity == 0 {
+            return Err(ErrorCode::LiquidityZero.into());
+        }
+
+        // Check the token amount
+        if amount == 0 {
+            return Err(ErrorCode::LiquidityZero.into());
+        }
+
+        // Check the lockbox PDA address correctness
+        let lockbox_pda = Pubkey::find_program_address(
+            &[b""liquidity_lockbox""],
+            &PROGRAM_ID
+        );
+        if lockbox_pda.0 != ctx.accounts.lockbox.key() {
+            return Err(ErrorCode::WrongLockboxPDA.into());
+        }
+
+        // Check the Orca Whirlpool program address
+        if ctx.accounts.whirlpool_program.key() != ORCA {
+            return Err(ErrorCode::WrongOrcaAccount.into());
+        }
+
+        // Check that the first token mint is SOL
+        if ctx.accounts.token_owner_account_a.mint != SOL || 
+           ctx.accounts.token_vault_a.mint != SOL {
+            return Err(ErrorCode::WrongTokenMint.into());
+        }
+
+        // Check that the second token mint is OLAS
+        if ctx.accounts.token_owner_account_b.mint != OLAS || 
+           ctx.accounts.token_vault_b.mint != OLAS {
+            return Err(ErrorCode::WrongTokenMint.into());
+        }
+
+        // Check tick arrays owner
+        if ctx.accounts.tick_array_lower.to_account_info().owner != &ORCA || 
+           ctx.accounts.tick_array_upper.to_account_info().owner != &ORCA {
+            return Err(ErrorCode::WrongOwner.into());
+        }
+
+        // Check the requested amount to be smaller or equal than the position liquidity
+        if amount > ctx.accounts.position.liquidity as u64 {
+            return Err(ErrorCode::AmountExceedsPositionLiquidity.into());
+        }
+
+        // Burn provided amount of bridged tokens
+        invoke_signed(
+            &burn_checked(
+                ctx.accounts.token_program.key,
+                ctx.accounts.bridged_token_account.to_account_info().key,
+                ctx.accounts.bridged_token_mint.to_account_info().key,
+                ctx.accounts.signer.to_account_info().key,
+                &[],
+                amount,
+                BRIDGED_TOKEN_DECIMALS,
+            )?,
+            &[
+                ctx.accounts.token_program.to_account_info(),
+                ctx.accounts.bridged_token_account.to_account_info(),
+                ctx.accounts.bridged_token_mint.to_account_info(),
+                ctx.accounts.signer.to_account_info(),
+            ],
+            &[]
+        )?;
+
+        // Get program signer seeds
+        let signer_seeds = &[&ctx.accounts.lockbox.seeds()[..]];
+
+        // Update fees for the position
+        let cpi_program_update_fees = ctx.accounts.whirlpool_program.to_account_info();
+        let cpi_accounts_update_fees = UpdateFeesAndRewards {
+            whirlpool: ctx.accounts.whirlpool.to_account_info(),
+            position: ctx.accounts.position.to_account_info(),
+            tick_array_lower: ctx.accounts.tick_array_lower.to_account_info(),
+            tick_array_upper: ctx.accounts.tick_array_upper.to_account_info()
+        };
+        let cpi_ctx_update_fees = CpiContext::new_with_signer(
+            cpi_program_update_fees,
+            cpi_accounts_update_fees,
+            signer_seeds
+        );
+        whirlpool::cpi::update_fees_and_rewards(cpi_ctx_update_fees)?;
+
+        // Collect fees from the position
+        let cpi_program_collect_fees = ctx.accounts.whirlpool_program.to_account_info();
+        let cpi_accounts_collect_fees = CollectFees {
+            whirlpool: ctx.accounts.whirlpool.to_account_info(),
+            position_authority: ctx.accounts.lockbox.to_account_info(),
+            position: ctx.accounts.position.to_account_info(),
+            position_token_account: ctx.accounts.pda_position_account.to_account_info(),
+            token_owner_account_a: ctx.accounts.fee_collector_token_owner_account_a.to_account_info(),
+            token_owner_account_b: ctx.accounts.fee_collector_token_owner_account_b.to_account_info(),
+            token_vault_a: ctx.accounts.token_vault_a.to_account_info(),
+            token_vault_b: ctx.accounts.token_vault_b.to_account_info(),
+            token_program: ctx.accounts.token_program.to_account_info()
+        };
+        let cpi_ctx_collect_fees = CpiContext::new_with_signer(
+            cpi_program_collect_fees,
+            cpi_accounts_collect_fees,
+            signer_seeds
+        );
+        whirlpool::cpi::collect_fees(cpi_ctx_collect_fees)?;
+
+        // CPI to decrease liquidity
+        let cpi_program_modify_liquidity = ctx.accounts.whirlpool_program.to_account_info();
+        let cpi_accounts_modify_liquidity = ModifyLiquidity {
+            whirlpool: ctx.accounts.whirlpool.to_account_info(),
+            position: ctx.accounts.position.to_account_info(),
+            position_authority: ctx.accounts.lockbox.to_account_info(),
+            position_token_account: ctx.accounts.pda_position_account.to_account_info(),
+            tick_array_lower: ctx.accounts.tick_array_lower.to_account_info(),
+            tick_array_upper: ctx.accounts.tick_array_upper.to_account_info(),
+            token_owner_account_a: ctx.accounts.token_owner_account_a.to_account_info(),
+            token_owner_account_b: ctx.accounts.token_owner_account_b.to_account_info(),
+            token_vault_a: ctx.accounts.token_vault_a.to_account_info(),
+            token_vault_b: ctx.accounts.token_vault_b.to_account_info(),
+            token_program: ctx.accounts.token_program.to_account_info()
+        };
+        let cpi_ctx_modify_liquidity = CpiContext::new_with_signer(
+            cpi_program_modify_liquidity,
+            cpi_accounts_modify_liquidity,
+            signer_seeds
+        );
+        whirlpool::cpi::decrease_liquidity(
+            cpi_ctx_modify_liquidity,
+            amount as u128,
+            token_min_a,
+            token_min_b
+        )?;
+
+        // Update the position liquidity
+        ctx.accounts.lockbox.total_liquidity = ctx.accounts.lockbox
+            .total_liquidity
+            .checked_sub(amount)
+            .unwrap_or_else(|| panic!(""Liquidity underflow""));
+
+        emit!(WithdrawEvent {
+            signer: ctx.accounts.signer.key(),
+            position: ctx.accounts.position.key(),
+            token_owner_account_a: ctx.accounts.token_owner_account_a.key(),
+            token_owner_account_b: ctx.accounts.token_owner_account_b.key(),
+            withdraw_liquidity: amount,
+            total_liquidity: ctx.accounts.lockbox.total_liquidity
+        });
+
+        Ok(())
+    }
+}
+
+#[derive(Accounts)]
+pub struct InitializeLiquidityLockbox<'info> {
+    #[account(mut)]
+    pub signer: Signer<'info>,
+    #[account(
+        init,
+        seeds = [b""liquidity_lockbox"".as_ref()],
+        bump,
+        payer = signer,
+        space = LiquidityLockbox::LEN
+    )]
+    pub lockbox: Box<Account<'info, LiquidityLockbox>>,
+    #[account(
+        constraint = bridged_token_mint.mint_authority.unwrap() == lockbox.key()
+    )]
+    pub bridged_token_mint: Box<Account<'info, Mint>>,
+    #[account(
+        constraint = signer.key == &fee_collector_token_owner_account_a.owner,
+        constraint = fee_collector_token_owner_account_a.key() != fee_collector_token_owner_account_b.key()
+    )]
+    pub fee_collector_token_owner_account_a: Box<Account<'info, TokenAccount>>,
+    #[account(
+        constraint = signer.key == &fee_collector_token_owner_account_b.owner
+    )]
+    pub fee_collector_token_owner_account_b: Box<Account<'info, TokenAccount>>,
+    #[account(has_one = whirlpool)]
+    pub position: Box<Account<'info, Position>>,
+    #[account(
+        mut,
+        constraint = pda_position_account.mint == position.position_mint,
+        constraint = pda_position_account.amount == 1,
+        constraint = lockbox.key() == pda_position_account.owner
+    )]
+    pub pda_position_account: Box<Account<'info, TokenAccount>>,
+    pub whirlpool: Box<Account<'info, Whirlpool>>,
+    #[account(address = token::ID)]
+    pub token_program: Program<'info, Token>,
+    pub system_program: Program<'info, System>,
+    pub rent: Sysvar<'info, Rent>
+}
+
+#[derive(Accounts)]
+pub struct DepositPositionForLiquidity<'info> {
+    #[account(mut)]
+    pub signer: Signer<'info>,
+    #[account(
+        mut,
+        address = lockbox.position,
+        has_one = whirlpool
+    )]
+    pub position: Box<Account<'info, Position>>,
+    #[account(
+        mut,
+        constraint = lockbox.key() == pda_position_account.owner,
+        constraint = pda_position_account.mint == position.position_mint,
+        constraint = pda_position_account.amount == 1
+    )]
+    pub pda_position_account: Box<Account<'info, TokenAccount>>,
+    #[account(
+        mut,
+        address = position.whirlpool
+    )]
+    pub whirlpool: Box<Account<'info, Whirlpool>>,
+    #[account(
+        mut,
+        constraint = token_owner_account_a.mint == whirlpool.token_mint_a,
+        constraint = token_owner_account_a.mint != token_owner_account_b.mint,
+        constraint = signer.key == &token_owner_account_a.owner
+    )]
+    pub token_owner_account_a: Box<Account<'info, TokenAccount>>,
+    #[account(
+        mut,
+        constraint = token_owner_account_b.mint == whirlpool.token_mint_b,
+        constraint = signer.key == &token_owner_account_b.owner
+    )]
+    pub token_owner_account_b: Box<Account<'info, TokenAccount>>,
+    #[account(
+        mut,
+        constraint = token_vault_a.key() == whirlpool.token_vault_a,
+        constraint = token_vault_a.key() != token_vault_b.key()
+    )]
+    pub token_vault_a: Box<Account<'info, TokenAccount>>,
+    #[account(
+        mut,
+        constraint = token_vault_b.key() == whirlpool.token_vault_b
+    )]
+    pub token_vault_b: Box<Account<'info, TokenAccount>>,
+    #[account(
+        mut,
+        has_one = whirlpool,
+        constraint = tick_array_lower.key() != tick_array_upper.key()
+    )]
+    pub tick_array_lower: AccountLoader<'info, TickArray>,
+    #[account(
+        mut,
+        has_one = whirlpool
+    )]
+    pub tick_array_upper: AccountLoader<'info, TickArray>,
+    #[account(
+        mut,
+        address = lockbox.bridged_token_mint
+    )]
+    pub bridged_token_mint: Box<Account<'info, Mint>>,
+    #[account(
+        mut,
+        constraint = bridged_token_account.mint == lockbox.bridged_token_mint,
+        constraint = bridged_token_mint.key() == lockbox.bridged_token_mint,
+        constraint = signer.key == &bridged_token_account.owner
+    )]
+    pub bridged_token_account: Box<Account<'info, TokenAccount>>,
+    #[account(mut)]
+    pub lockbox: Box<Account<'info, LiquidityLockbox>>,
+    pub whirlpool_program: Program<'info, whirlpool::program::Whirlpool>,
+    #[account(address = token::ID)]
+    pub token_program: Program<'info, Token>,
+    pub system_program: Program<'info, System>,
+    pub rent: Sysvar<'info, Rent>,
+}
+
+#[derive(Accounts)]
+pub struct WithdrawLiquidityForTokens<'info> {
+    #[account(
+        mut,
+        address = position.whirlpool
+    )]
+    pub whirlpool: Box<Account<'info, Whirlpool>>,
+    pub signer: Signer<'info>,
+    #[account(
+        mut,
+        address = lockbox.bridged_token_mint
+    )]
+    pub bridged_token_mint: Box<Account<'info, Mint>>,
+    #[account(
+        mut,
+        constraint = bridged_token_account.mint == lockbox.bridged_token_mint,
+        constraint = lockbox.bridged_token_mint == bridged_token_mint.key(),
+        constraint = signer.key == &bridged_token_account.owner
+    )]
+    pub bridged_token_account: Box<Account<'info, TokenAccount>>,
+    #[account(
+        mut,
+        address = lockbox.position,
+        has_one = whirlpool,
+        has_one = position_mint
+    )]
+    pub position: Box<Account<'info, Position>>,
+    #[account(
+        mut,
+        constraint = pda_position_account.mint == position.position_mint,
+        constraint = pda_position_account.amount == 1,
+        constraint = lockbox.key() == pda_position_account.owner
+    )]
+    pub pda_position_account: Box<Account<'info, TokenAccount>>,
+    #[account(
+        mut,
+        address = position.position_mint,
+        constraint = position_mint.supply == 1
+    )]
+    pub position_mint: Box<Account<'info, Mint>>,
+    #[account(
+        mut,
+        constraint = token_owner_account_a.mint == whirlpool.token_mint_a,
+        constraint = token_owner_account_a.mint != token_owner_account_b.mint,
+        constraint = signer.key == &token_owner_account_a.owner
+    )]
+    pub token_owner_account_a: Box<Account<'info, TokenAccount>>,
+    #[account(
+        mut,
+        constraint = token_owner_account_b.mint == whirlpool.token_mint_b,
+        constraint = signer.key == &token_owner_account_b.owner
+    )]
+    pub token_owner_account_b: Box<Account<'info, TokenAccount>>,
+    #[account(
+        mut,
+        address = lockbox.fee_collector_token_owner_account_a
+    )]
+    pub fee_collector_token_owner_account_a: Box<Account<'info, TokenAccount>>,
+    #[account(
+        mut,
+        address = lockbox.fee_collector_token_owner_account_b
+    )]
+    pub fee_collector_token_owner_account_b: Box<Account<'info, TokenAccount>>,
+    #[account(
+        mut,
+        constraint = token_vault_a.key() == whirlpool.token_vault_a,
+        constraint = token_vault_a.key() != token_vault_b.key()
+    )]
+    pub token_vault_a: Box<Account<'info, TokenAccount>>,
+    #[account(
+        mut,
+        constraint = token_vault_b.key() == whirlpool.token_vault_b
+    )]
+    pub token_vault_b: Box<Account<'info, TokenAccount>>,
+    #[account(
+        mut,
+        has_one = whirlpool,
+        constraint = tick_array_lower.key() != tick_array_upper.key()
+    )]
+    pub tick_array_lower: AccountLoader<'info, TickArray>,
+    #[account(
+        mut,
+        has_one = whirlpool
+    )]
+    pub tick_array_upper: AccountLoader<'info, TickArray>,
+    #[account(mut)]
+    pub lockbox: Box<Account<'info, LiquidityLockbox>>,
+    pub whirlpool_program: Program<'info, whirlpool::program::Whirlpool>,
+    #[account(address = token::ID)]
+    pub token_program: Program<'info, Token>
+}
+
+#[error_code]
+pub enum ErrorCode {
+    #[msg(""Liquidity value overflow"")]
+    LiquidityOverflow,
+    #[msg(""Liquidity value underflow"")]
+    LiquidityUnderflow,
+    #[msg(""Wrong whirlpool address"")]
+    WrongWhirlpool,
+    #[msg(""Wrong position PDA header"")]
+    WrongPositionHeader,
+    #[msg(""Wrong position ID"")]
+    WrongPositionId,
+    #[msg(""Liquidity is zero"")]
+    LiquidityZero,
+    #[msg(""Liquidity is not zero"")]
+    LiquidityNotZero,
+    #[msg(""Delta token amount bigger than the max allowed one"")]
+    DeltaAmountOverflow,
+    #[msg(""Requested amount exceeds a position liquidity"")]
+    AmountExceedsPositionLiquidity,
+    #[msg(""Requested amount exceeds total liquidity"")]
+    AmountExceedsTotalLiquidity,
+    #[msg(""Tick out of range"")]
+    OutOfRange,
+    #[msg(""Wrong account owner"")]
+    WrongOwner,
+    #[msg(""Provided wrong position PDA"")]
+    WrongPositionPDA,
+    #[msg(""Provided wrong lockbox PDA"")]
+    WrongLockboxPDA,
+    #[msg(""Provided wrong position ATA"")]
+    WrongPositionAccount,
+    #[msg(""Provided wrong PDA position ATA"")]
+    WrongPDAPositionAccount,
+    #[msg(""Provided wrong Orca program account"")]
+    WrongOrcaAccount,
+    #[msg(""Wrong token mint"")]
+    WrongTokenMint,
+    #[msg(""Whirlpool number downcast"")]
+    WhirlpoolNumberDownCastError
+}
+
+#[event]
+pub struct DepositEvent {
+    // Signer (user)
+    #[index]
+    pub signer: Pubkey,
+    // Liquidity position
+    #[index]
+    pub position: Pubkey,
+    // Deposit liquidity amount
+    pub deposit_liquidity: u64,
+    // Total position liquidity
+    pub total_liquidity: u64
+}
+
+#[event]
+pub struct WithdrawEvent {
+    // Signer (user)
+    #[index]
+    pub signer: Pubkey,
+    // Liquidity position
+    #[index]
+    pub position: Pubkey,
+    // User ATA token A
+    pub token_owner_account_a: Pubkey,
+    // User ATA token B
+    pub token_owner_account_b: Pubkey,
+    // Withdraw liquidity amount
+    pub withdraw_liquidity: u64,
+    // Total position liquidity
+    pub total_liquidity: u64
+}",High,"After introduction of a liquidity_amount parameter in the deposit() function, it is ensured the a user receives the expected liquidity_amount of bridged tokens while only spending token_max_a of SOL and token_max_b of OLAS in the worst-case. As a consequence of those in- and output constraints, a user is sufficiently protected from a sandwich attack. Furthermore, the direct use of liquidity_amount, token_max_a and token_max_b with the underlying Whirlpool program led to obsolete code, which was previously used for the computation of the liquidity & token b amounts, that facilitated the sandwich attack in the first place. Consequently, the get_liquidity_from_token_a() function became obsolete too and was removed and therefore also resolved the Division before multiplication in liquidity_lockbox::get_liquidity_from_token_a(...) #50 issue. In addition, the approval of any unused SOL & OLAS tokens (not all of token_max_a/token_max_b used) is revoked (set to 0).",https://gist.github.com/MarioPoneder/b7f287884607958eda81f3419efbc1e8,High
 Sol-114,"Users can deposit their stSol in order to get bSol and Anker maintains an stSol reserve to back the bSOL supply at a 1 bSOL = 1 SOL exchange rate. However since stSol appreciate in value, Anker has been fitted with a SellRewards instruction to sell off any exess stSol value build-up. This instruction is supposed to be called by crankers and therefore is permissionless. Anker uses Orca’s deployment of SPL token-swap program to swap stSol for UST. The issue is that SellRewards never verifies that it is actually dealing with Orca’s token-swap program, allowing an attacker to supply an arbitrary program. This program will subsequently be called using Solana’s invoke_signed() API and signed by the token_swap_authority. An attacker can craft their own malicious fork of the SPL token-swap program, that withdraws all the funds from the reserve to an attacker controlled account.","rust
 let (solido, mut anker) = deserialize_anker(program_id, accounts.anker, accounts.solido)?;
 solido.check_manager(accounts.manager)?;
@@ -9042,7 +10731,76 @@ impl SetTargetChainMinFee<'_> {
         target_chain_min_fee.min_fee = min_fee;
         Ok(())
     }
-}",,Low,Introduce an order cancellation mechanism that allows users to cancel their unprocessed orders. This would prevent the protocol from being forced to process orders at a loss in cases of mismanaged fees or volatile gas prices.,https://hacken.io/audits/shuttle-labs/sca-shuttle-labs-rust-jan2025/,High
+}","#[derive(Accounts)]
+pub struct CancelOrder<'info> {
+    #[account(mut)]
+    pub order: Account<'info, Order>,
+    #[account(mut)]
+    pub user: Signer<'info>,
+    // Additional accounts as needed
+}
+
+impl CancelOrder<'_> {
+    pub fn process_instruction(ctx: Context<Self>, order_id: u64) -> Result<()> {
+        let order = &mut ctx.accounts.order;
+        
+        // Validate order can be cancelled
+        require!(
+            order.status == OrderStatus::Pending,
+            ProtocolError::OrderNotCancellable
+        );
+        require!(
+            order.user == ctx.accounts.user.key(),
+            ProtocolError::Unauthorized
+        );
+        
+        // Refund locked funds to user
+        let refund_amount = order.amount;
+        // Implement token transfer logic here
+        // ...
+        
+        // Update order status
+        order.status = OrderStatus::Cancelled;
+        order.cancelled_at = Clock::get()?.unix_timestamp;
+        
+        emit!(OrderCancelled {
+            order_id,
+            user: ctx.accounts.user.key(),
+            amount: refund_amount,
+            timestamp: order.cancelled_at,
+        });
+        
+        Ok(())
+    }
+}
+
+#[account]
+pub struct Order {
+    pub id: u64,
+    pub user: Pubkey,
+    pub amount: u64,
+    pub status: OrderStatus,
+    pub created_at: i64,
+    pub cancelled_at: Option<i64>,
+    // Additional order fields
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq)]
+pub enum OrderStatus {
+    Pending,
+    Processing,
+    Completed,
+    Cancelled,
+    Failed,
+}
+
+#[event]
+pub struct OrderCancelled {
+    pub order_id: u64,
+    pub user: Pubkey,
+    pub amount: u64,
+    pub timestamp: i64,
+}",Low,Introduce an order cancellation mechanism that allows users to cancel their unprocessed orders. This would prevent the protocol from being forced to process orders at a loss in cases of mismanaged fees or volatile gas prices.,https://hacken.io/audits/shuttle-labs/sca-shuttle-labs-rust-jan2025/,Low
 Sol-127,"The create_pool instruction requires the associated token account for the pool to be uninitialized. However, a malicious actor can pre-initialize this account before the legitimate creator does, effectively blocking the pool creation process. This creates a Denial of Service (DoS) vulnerability, where an attacker can prevent others from creating pools by pre-initializing the required associated token accounts, disrupting the protocol's functionality and user experience.","rust
 #[derive(Accounts)]
 pub struct CreateLiquidityPool<'info> {
@@ -9619,7 +11377,51 @@ pub struct SwapTokensForSOL<'info> {
     )]
     pub trader_token_vault: Box<Account<'info, TokenAccount>>,
     // ...
-}",,Critical,,https://dedaub.com/audits/otsea/otsea-p2p-markets-may-29-2024/,Medium
+}","#[derive(Accounts)]
+#[instruction(trade: Trade)]
+pub struct SwapTokensForSOL<'info> {
+    // ... (existing accounts remain the same)
+
+    #[account(
+        mut,
+        constraint = creator_token_vault.mint == token_mint.key(),
+        constraint = creator_token_vault.owner == creator.key(),  // Validate creator owns the vault
+        constraint = creator_token_vault.key() == order.creator_token_vault  // Validate correct vault account
+    )]
+    pub creator_token_vault: Box<Account<'info, TokenAccount>>,
+
+    #[account(
+        mut,
+        constraint = trader_token_vault.mint == token_mint.key(),
+        constraint = trader_token_vault.owner == signer.key()  // Validate trader owns their vault
+    )]
+    pub trader_token_vault: Box<Account<'info, TokenAccount>>,
+    // ...
+}",Critical,"Key security improvements made:
+
+Proper Creator Vault Validation:
+
+Added creator_token_vault.owner == creator.key() to ensure the vault belongs to the order creator
+
+Added creator_token_vault.key() == order.creator_token_vault to verify the correct vault account is used
+
+Separation of Concerns:
+
+Removed incorrect constraints that were checking trader's vault against creator's vault
+
+Each vault now has its own specific validation rules
+
+Maintained Existing Safety:
+
+Kept all mint verification constraints
+
+Preserved trader vault ownership checks
+
+Prevents the Attack Vector:
+
+Malicious traders can no longer substitute their own vault as the creator's vault
+
+Ensures tokens are properly transferred between correct vaults",https://dedaub.com/audits/otsea/otsea-p2p-markets-may-29-2024/,Low
 Sol-140,"Traders of Buy orders get fewer SOL tokens than supposed and some also become permanently lost in the order vaults. The swap_tokens_for_sol instruction is responsible for performing the swaps of all the Buy orders which aim to trade SOL tokens for any other SPL Token. On each trade, a fee is applied based on the preconfigured global OTSea parameters which include fish (initialized as 1%), whale (initialized as 0.3%) and partner (initialized as 30% of fish/whale) fees. On every trade, the calculated amount of SOL tokens to be received by the trader is subject to deductions based on those fees. Thus, the calculate_revenue function determines how many of them should be attributed to the revenue vault (and the partners subsequently). However, the amount_output represents the total amount of SOL tokens that should be removed from the order’s SOL vault, but this does not seem to be followed properly. More specifically, the issue becomes apparent following the steps below: A trader requests to swap 100 Tokens for 100 SOL tokens (assuming a 1:1 ratio for simplicity) Let’s assume that the order’s vault holds exactly 100 SOL tokens which means that the order will be fulfilled The execute_trade call from inside the swap_tokens_for_sol instruction returns that 100 SOL tokens should be given to the trader (aka. amount_output = 100), but also increases the order.input_transacted field by 100 which marks the order as fulfilled The calculate_revenue call afterwards calculates how many of these SOL tokens should be withheld based on the preconfigured fees (fish_fee = 1%). As a result, the total_revenue will be 1 SOL token. Then, we transfer the SOL tokens to the trader subtracting the fees calculated, which means that only 99 SOL tokens are sent to the trader However, when it comes to paying the fees to the revenue_vault and the partner, the tokens are taken from the trader’s account and not from the order’s account as they should since the 1 SOL token was already left behind upon the first transfer to the trader. As a result, this leads to the trader losing another 1 SOL token from their earnings and the 1 SOL token that was left in the order_token_vault to be lost there forever since the account should also be closed due to the order being fulfilled. The total losses are as follows: For the funds, 1% of the total SOL tokens used by all the Buy order vaults become permanently lost For the traders, 1% * 99% of the total SOL tokens used by all the Buy order vaults, who lose this amount as it is being sent to the fee receivers It seems that this issue resulted from a misconfigured copy of the code from the other swap instruction (swap_sol_for_tokens) which correctly transfers the SOL tokens from the trader to the fee receivers.","rust
 pub fn swap_tokens_for_sol(
     ctx: Context<SwapTokensForSOL>, 
@@ -9692,7 +11494,82 @@ pub fn swap_tokens_for_sol(
         distribute_revenue,
     )?;
     ...
-}",,High,"To fix this issue, you should either transfer the entire amount_output to the trader and then from their account to the fee receivers or change the from arguments of the SOL token transfer CPIs to be from the order_token_vault and not from the trader.",https://dedaub.com/audits/otsea/otsea-p2p-markets-may-29-2024/,Medium
+}","pub fn swap_tokens_for_sol(
+    ctx: Context<SwapTokensForSOL>, 
+    trade: Trade, 
+    fee_type: FeeType, 
+) -> Result<()> 
+{
+    ...
+    let amount_output = execute_trade(
+        &mut ctx.accounts.order, 
+        ctx.accounts.signer.key(), 
+        ™, 
+        ctx.accounts.token_mint.key()
+    )?;
+    
+    let order = &ctx.accounts.order;
+    
+    let (total_revenue, distribute_revenue, partner_revenue) = calculate_revenue(
+        &ctx.accounts.otsea,
+        &ctx.accounts.partner,
+        amount_output,
+        order.fee_type
+    )?;
+    
+    // Option 1: Transfer full amount to trader first, then deduct fees
+    // (Alternative solution mentioned in recommendation)
+    
+    // Option 2: Directly deduct fees from order vault (implemented below)
+    // Transfer trader's portion from order vault
+    let transfer_sol_amount = amount_output.checked_sub(total_revenue).unwrap();
+    
+    token::transfer(
+        CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            token::Transfer {
+                from: ctx.accounts.order_token_vault.to_account_info(),
+                to: ctx.accounts.trader_sol_token_vault.to_account_info(),
+                authority: ctx.accounts.order.to_account_info(),
+            },
+            &[&[b""order"", &order.id.to_le_bytes(), &[order.bump]]],
+        ),
+        transfer_sol_amount,
+    )?;
+    
+    // Transfer revenue portion from order vault
+    if distribute_revenue > 0 {
+        token::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                token::Transfer {
+                    from: ctx.accounts.order_token_vault.to_account_info(),
+                    to: ctx.accounts.revenue_vault.to_account_info(),
+                    authority: ctx.accounts.order.to_account_info(),
+                },
+                &[&[b""order"", &order.id.to_le_bytes(), &[order.bump]]],
+            ),
+            distribute_revenue,
+        )?;
+    }
+    
+    // Transfer partner portion from order vault
+    if partner_revenue > 0 {
+        token::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                token::Transfer {
+                    from: ctx.accounts.order_token_vault.to_account_info(),
+                    to: ctx.accounts.partner_sol_token_account.as_ref().unwrap().to_account_info(),
+                    authority: ctx.accounts.order.to_account_info(),
+                },
+                &[&[b""order"", &order.id.to_le_bytes(), &[order.bump]]],
+            ),
+            partner_revenue,
+        )?;
+    }
+    ...
+}",High,"To fix this issue, you should either transfer the entire amount_output to the trader and then from their account to the fee receivers or change the from arguments of the SOL token transfer CPIs to be from the order_token_vault and not from the trader.",https://dedaub.com/audits/otsea/otsea-p2p-markets-may-29-2024/,Low
 Sol-141,"The whitelist PDA of an order can remain unclosed even after the order gets fulfilled and fully claimed. All the Sell orders that have a lock-up period set (or if the partner has a lock-up override enabled) put the swapped tokens into a lock-up for the users that requested a trade. After the lock-up period expires the traders can claim their tokens by using the lock_up::claim_lock_up instruction. When the last locked-up amount for an order is claimed and the order has been Cancelled by the owner or has been Fulfilled, the PDAs used by that order have to be closed. However, even though the order_token_vault and the order accounts are successfully closed, if the order owner had created a whitelist PDA, this can remain unclosed in case the last trader does not provide it in the context of the called claim instruction since the account is defined as Option<>. As a consequence, this can result in leaving whitelist PDAs open withholding the SOL tokens paid for the account creation from being reimbursed to the order creator.","rust
 lock_up::claim_lock_up:71 pub fn claim_lock_up(ctx: Context<ClaimLockUp>, ...) -> Result<()> { 
     ...
@@ -9726,7 +11603,99 @@ pub struct ClaimLockUp<'info> {
     )]
     pub whitelist: Option, 
     ... 
-}",,Medium,,https://dedaub.com/audits/otsea/otsea-p2p-markets-may-29-2024/,Medium
+}","pub fn claim_lock_up(ctx: Context<ClaimLockUp>, ...) -> Result<()> {
+    ...
+    let remain_lockup_amount = order.total_locked_up.checked_sub(order.unlocked_transacted).unwrap();
+    
+    if (order.state == State::Cancelled || order.state == State::Fulfilled) && remain_lockup_amount == 0 {
+        // Close token vault
+        token::close_account(...)?;
+        
+        // Close order account
+        ctx.accounts.order.close(ctx.accounts.creator.to_account_info())?;
+        
+        // Close whitelist account if it exists (even if not provided in context)
+        if let Some(whitelist_key) = order.whitelist {
+            let whitelist_account = AccountInfo::try_from(&whitelist_key)?;
+            if whitelist_account.lamports() > 0 {
+                let whitelist_seeds = [
+                    b""whitelist"",
+                    &order.creator.key().to_bytes(),
+                    &order.id.to_le_bytes(),
+                    &[order.whitelist_bump],
+                ];
+                
+                token::close_account(CpiContext::new_with_signer(
+                    ctx.accounts.token_program.to_account_info(),
+                    token::CloseAccount {
+                        account: whitelist_account.clone(),
+                        destination: ctx.accounts.creator.to_account_info(),
+                        authority: ctx.accounts.order.to_account_info(),
+                    },
+                    &[&whitelist_seeds],
+                ))?;
+            }
+        }
+    }
+    ...
+}
+
+#[derive(Accounts)]
+#[instruction(order_id: u64)]
+pub struct ClaimLockUp<'info> {
+    // Make whitelist account optional but still validate if provided
+    #[account(
+        mut,
+        seeds = [
+            b""whitelist"",
+            order.creator.key().as_ref(),
+            &order.id.to_le_bytes()
+        ],
+        bump = order.whitelist_bump,
+        constraint = whitelist.as_ref().map_or(true, |w| w.key() == order.whitelist.unwrap())
+    )]
+    pub whitelist: Option<Account<'info, Whitelist>>,
+    ...
+}",Medium,"Key improvements:
+
+Automatic Whitelist Closure:
+
+Now checks and closes whitelist PDA even if not provided in context
+
+Uses order's stored whitelist key to locate the account
+
+Proper Account Validation:
+
+Updated whitelist account constraints to properly validate when present
+
+Uses order's whitelist_bump for seed derivation
+
+Safe Account Handling:
+
+Checks lamports before attempting to close
+
+Properly signs with whitelist seeds
+
+Returns funds to order creator
+
+Maintained Flexibility:
+
+Still allows whitelist to be optional in the context
+
+Preserves all existing functionality
+
+This solution ensures:
+
+No SOL remains locked in whitelist PDAs
+
+All order-related accounts are properly cleaned up
+
+Funds are returned to the rightful owner (order creator)
+
+Backward compatibility with existing claims
+
+Proper authorization for account closures
+",https://dedaub.com/audits/otsea/otsea-p2p-markets-may-29-2024/,Low
 Sol-142,"The order owner loses the rent-exempt amount paid for the whitelist PDA of orders with lockups. The order creators can create whitelist PDAs for their orders to only allow specific accounts to perform trades with. However, for the orders that have enabled lock-ups or the partners used have an enabled lock-up override, their owners may not be able to get the SOL paid for the rent exemption of the whitelist PDAs back. This can happen if the order has been Cancelled or Fulfilled, but there are still active lockups to be claimed by the traders. The last trader is responsible for providing the whitelist PDA so once all funds have been claimed all the order-related accounts be closed. However, when closing the whitelist account, the SOL tokens are requested to be transferred to the signer (who is the trader) and not to the order creator as they should.","rust
 lock_up::claim_lock_up:72 pub fn claim_lock_up(...) -> Result<()> { 
     ... 
@@ -9742,7 +11711,85 @@ lock_up::claim_lock_up:72 pub fn claim_lock_up(...) -> Result<()> {
         } 
     } 
     ... 
-}",,Medium,,https://dedaub.com/audits/otsea/otsea-p2p-markets-may-29-2024/,Medium
+}","pub fn claim_lock_up(ctx: Context<ClaimLockUp>, ...) -> Result<()> {
+    ...
+    let remain_lockup_amount = order.total_locked_up.checked_sub(order.unlocked_transacted).unwrap();
+    
+    if (order.state == State::Cancelled || order.state == State::Fulfilled) && remain_lockup_amount == 0 {
+        // Close token vault
+        token::close_account(...)?;
+        
+        // Close order account
+        ctx.accounts.order.close(ctx.accounts.creator.to_account_info())?;
+        
+        // Close whitelist account if it exists
+        if let Some(whitelist) = &ctx.accounts.whitelist {
+            // Transfer rent-exempt SOL back to order creator, not trader
+            let whitelist_account_info = whitelist.to_account_info();
+            let creator_account_info = ctx.accounts.creator.to_account_info();
+            
+            // Create CPI context with proper authority (order account)
+            token::close_account(CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                token::CloseAccount {
+                    account: whitelist_account_info.clone(),
+                    destination: creator_account_info.clone(),
+                    authority: ctx.accounts.order.to_account_info(),
+                },
+                &[&[
+                    b""whitelist"",
+                    &order.creator.key().to_bytes(),
+                    &order.id.to_le_bytes(),
+                    &[order.whitelist_bump],
+                ],
+            ))?;
+        }
+    }
+    ...
+}
+
+#[derive(Accounts)]
+#[instruction(order_id: u64)]
+pub struct ClaimLockUp<'info> {
+    #[account(
+        mut,
+        seeds = [
+            b""whitelist"",
+            order.creator.key().as_ref(),
+            &order.id.to_le_bytes()
+        ],
+        bump = order.whitelist_bump,
+        constraint = whitelist.as_ref().map_or(true, |w| w.key() == order.whitelist.unwrap())
+    )]
+    pub whitelist: Option<Account<'info, Whitelist>>,
+    ...
+}",Medium,"Correct Fund Destination:
+
+Now sends whitelist PDA rent to creator account instead of signer (trader)
+
+Uses proper authority (order account) for closing
+
+Improved Account Handling:
+
+Explicit CPI context creation for whitelist closure
+
+Proper seed derivation using stored whitelist_bump
+
+Better account validation in the accounts struct
+
+Safety Checks:
+
+Maintains all existing constraints
+
+Only attempts closure if whitelist exists
+
+Uses checked arithmetic
+
+Backward Compatibility:
+
+Still allows whitelist to be optional
+
+Preserves all existing functionality",https://dedaub.com/audits/otsea/otsea-p2p-markets-may-29-2024/,Low
 Sol-143,"update_whitelist can only be used once for each order In the owner_instructions file. the update_whitelist function is supposed to allow the owner of an order to set and update a whitelist per order. However, the whitelist account which should be provided with the UpdateWhitelistContext validation struct, has the init constraint applied. As a result, this means that a call to update_whitelist is only possible for the first time the owner tries to initialize a whitelist for an order. Any subsequent updates will fail since the init constraint fails the verification if the account provided already exists. We suppose that the expected constraint should be the init_if_needed which initializes the account if it does not exist, but also allows continuous updates on later instruction calls.","rust
 // owner_instructions.rs -> UpdateWhitelistContext::whitelist:244
 #[derive(Accounts)]
@@ -9754,7 +11801,58 @@ pub struct UpdateWhitelistContext<'info> {
     #[account(init, ...)] 
     pub whitelist: Account<'info, Whitelist>,
     ...
-}",,Low,,https://dedaub.com/audits/otsea/otsea-p2p-markets-may-29-2024/,Medium
+}","#[derive(Accounts)]
+#[instruction(order_id: u64)]
+pub struct UpdateWhitelistContext<'info> {
+    #[account(
+        init_if_needed,
+        payer = owner,
+        space = 8 + Whitelist::LEN,
+        seeds = [
+            b""whitelist"",
+            order.creator.key().as_ref(),
+            &order.id.to_le_bytes()
+        ],
+        bump,
+    )]
+    pub whitelist: Account<'info, Whitelist>,
+
+    #[account(mut)]
+    pub owner: Signer<'info>,
+
+    #[account(
+        has_one = owner,
+        seeds = [
+            b""order"",
+            owner.key().as_ref(),
+            &order_id.to_le_bytes()
+        ],
+        bump = order.bump,
+    )]
+    pub order: Account<'info, Order>,
+
+    pub system_program: Program<'info, System>,
+}",Low,"Changed Constraint:
+
+Replaced init with init_if_needed to allow both creation and updates
+
+Maintains all other existing constraints and validations
+
+Added Safety Features:
+
+Still requires payer (owner) for initial creation
+
+Maintains space requirements
+
+Keeps proper seed derivation
+
+Preserved Functionality:
+
+First call creates the whitelist if it doesn't exist
+
+Subsequent calls can update the whitelist
+
+All existing account relationships remain enforced",https://dedaub.com/audits/otsea/otsea-p2p-markets-may-29-2024/,Low
 Sol-144,"update_lock_up_override incorrectly prevents partners from using the function. In the owner_instructions file, the update_lock_up_override function is meant to allow the admin and the partners to modify their lock-up parameter. However, the checks applied to ensure that the correct accounts were given have conflicting conditions which effectively only allows the admin to try to update a not initialized partner account. More precisely, the first require statement should check if the partner’s public key has been initialized and is not the default key.","rust
 owner_instructions::update_lock_up_override:140 pub fn update_lock_up_override( 
     ctx: Context<LockupOverrideContext>, 
@@ -9777,7 +11875,36 @@ owner_instructions::update_lock_up_override:140 pub fn update_lock_up_override(
 
     // Code continues here
     ...
-}",,Low,,https://dedaub.com/audits/otsea/otsea-p2p-markets-may-29-2024/,Medium
+}","pub fn update_lock_up_override(
+    ctx: Context<LockupOverrideContext>,
+    enforce: bool
+) -> Result<()> {
+    let partner = &mut ctx.accounts.partner;
+
+    // Check if partner account is initialized (public_key != system_program::ID)
+    require!(
+        partner.public_key != system_program::ID,
+        OTSeaErrorCode::PartnerNotInitialized
+    );
+
+    // Verify either the signer is the partner or admin
+    require!(
+        partner.public_key == ctx.accounts.signer.key() || 
+        ctx.accounts.otsea.admin == ctx.accounts.signer.key(),
+        OTSeaErrorCode::Unauthorized
+    );
+
+    partner.enforce_lock_up = enforce;
+
+    emit!(LockUpOverrideUpdated {
+        partner: partner.public_key,
+        admin: ctx.accounts.otsea.admin,
+        enforce,
+        timestamp: Clock::get()?.unix_timestamp,
+    });
+
+    Ok(())
+}",Low,,https://dedaub.com/audits/otsea/otsea-p2p-markets-may-29-2024/,Low
 Sol-145,"Missing Validation of Mint Address. The mint account in the WithdrawFunds struct lacks proper validation of its address. This allows an admin to pass in any mint account with an inflated supply, potentially bypassing withdrawal limits.","rust
 pub struct WithdrawFunds<'info> {
     #[account(mut, seeds = [b""token-manager""], bump)]
@@ -11912,7 +14039,378 @@ pub fn deposit_stake(
             data: StakePoolInstruction::DepositStake.try_to_vec().unwrap(),
        }
     ]
-}",Error fetching AI explanation: list index out of range,High,"Add instructions that allow the user to specify the minimum amount of tokens they expect to receive. In order to protect against manager fee hikes, a user can use the following instructions and specify a slippage parameter. If the subsequent fee deduction reduces the received amount below this value, the instruction will abort: 1. DepositStakeWithSlippage 2. WithdrawStakeWithSlippage 3. DepositSolWithSlippage 4. WithdrawSolWithSlippage","https://github.com/solana-labs/solana-program-library/pull/3980/files, https://file.notion.so/f/f/97ab6450-64d1-4350-a5cf-a0c0c607f5c4/f5079737-734d-4b73-88a5-4c00eb20015d/Solana_Stake_Pool_audit_final.pdf?table=block&id=353af6fc-8c19-4e59-aefc-3aebc813b926&spaceId=97ab6450-64d1-4350-a5cf-a0c0c607f5c4&expirationTimestamp=1743307200000&signature=ga0AQbGGoM7PDHTRtRK5aEOAatzTupp7GT5nQAkWS80&downloadName=Solana+Stake+Pool+Audit+Report.pdf",High
+}","fn deposit_stake_internal(
+    program_id: &Pubkey,
+    stake_pool: &Pubkey,
+    validator_list_storage: &Pubkey,
+    stake_pool_deposit_authority: Option<&Pubkey>,
+    stake_pool_withdraw_authority: &Pubkey,
+    deposit_stake_address: &Pubkey,
+    deposit_stake_withdraw_authority: &Pubkey,
+    validator_stake_account: &Pubkey,
+    reserve_stake_account: &Pubkey,
+    pool_tokens_to: &Pubkey,
+    manager_fee_account: &Pubkey,
+    referrer_pool_tokens_account: &Pubkey,
+    pool_mint: &Pubkey,
+    token_program_id: &Pubkey,
+    minimum_pool_tokens_out: Option<u64>,
+) -> Vec<Instruction> {
+    let mut instructions = vec![];
+    let mut accounts = vec![
+        AccountMeta::new(*stake_pool, false),
+        AccountMeta::new(*validator_list_storage, false),
+    ];
+
+    if let Some(stake_pool_deposit_authority) = stake_pool_deposit_authority {
+        accounts.push(AccountMeta::new_readonly(
+            *stake_pool_deposit_authority,
+            true,
+        ));
+        instructions.extend_from_slice(&[
+            stake::instruction::authorize(
+                deposit_stake_address,
+                deposit_stake_withdraw_authority,
+                stake_pool_deposit_authority,
+                stake::state::StakeAuthorize::Staker,
+                None,
+            ),
+            stake::instruction::authorize(
+                deposit_stake_address,
+                deposit_stake_withdraw_authority,
+                stake_pool_deposit_authority,
+                stake::state::StakeAuthorize::Withdrawer,
+                None,
+            ),
+        ]);
+    } else {
+        let stake_pool_deposit_authority = find_deposit_authority_program_address(program_id, stake_pool).0;
+        accounts.push(AccountMeta::new_readonly(
+            stake_pool_deposit_authority,
+            false,
+        ));
+        instructions.extend_from_slice(&[
+            stake::instruction::authorize(
+                deposit_stake_address,
+                deposit_stake_withdraw_authority,
+                &stake_pool_deposit_authority,
+                stake::state::StakeAuthorize::Staker,
+                None,
+            ),
+            stake::instruction::authorize(
+                deposit_stake_address,
+                deposit_stake_withdraw_authority,
+                &stake_pool_deposit_authority,
+                stake::state::StakeAuthorize::Withdrawer,
+                None,
+            ),
+        ]);
+    };
+
+    accounts.extend_from_slice(&[
+        AccountMeta::new_readonly(*stake_pool_withdraw_authority, false),
+        AccountMeta::new(*deposit_stake_address, false),
+        AccountMeta::new(*validator_stake_account, false),
+        AccountMeta::new(*reserve_stake_account, false),
+        AccountMeta::new(*pool_tokens_to, false),
+        AccountMeta::new(*manager_fee_account, false),
+        AccountMeta::new(*referrer_pool_tokens_account, false),
+        AccountMeta::new(*pool_mint, false),
+        AccountMeta::new_readonly(sysvar::clock::id(), false),
+        AccountMeta::new_readonly(sysvar::stake_history::id(), false),
+        AccountMeta::new_readonly(*token_program_id, false),
+        AccountMeta::new_readonly(stake::program::id(), false),
+    ]);
+
+    instructions.push(
+        if let Some(minimum_pool_tokens_out) = minimum_pool_tokens_out {
+            Instruction {
+                program_id: *program_id,
+                accounts,
+                data: StakePoolInstruction::DepositStakeWithSlippage {
+                    minimum_pool_tokens_out,
+                }
+                .try_to_vec()
+                .unwrap(),
+            }
+        } else {
+            Instruction {
+                program_id: *program_id,
+                accounts,
+                data: StakePoolInstruction::DepositStake
+                    .try_to_vec()
+                    .unwrap(),
+            }
+        },
+    );
+
+    instructions
+}
+
+/// Creates instructions required to deposit into a stake pool, given a stake
+/// account owned by the user.
+pub fn deposit_stake(
+    program_id: &Pubkey,
+    stake_pool: &Pubkey,
+    validator_list_storage: &Pubkey,
+    stake_pool_withdraw_authority: &Pubkey,
+    deposit_stake_address: &Pubkey,
+    deposit_stake_withdraw_authority: &Pubkey,
+    validator_stake_account: &Pubkey,
+    reserve_stake_account: &Pubkey,
+    pool_tokens_to: &Pubkey,
+    manager_fee_account: &Pubkey,
+    referrer_pool_tokens_account: &Pubkey,
+    pool_mint: &Pubkey,
+    token_program_id: &Pubkey,
+) -> Vec<Instruction> {
+    deposit_stake_internal(
+        program_id,
+        stake_pool,
+        validator_list_storage,
+        None,
+        stake_pool_withdraw_authority,
+        deposit_stake_address,
+        deposit_stake_withdraw_authority,
+        validator_stake_account,
+        reserve_stake_account,
+        pool_tokens_to,
+        manager_fee_account,
+        referrer_pool_tokens_account,
+        pool_mint,
+        token_program_id,
+        None,
+    )
+}
+
+/// Creates instructions to deposit into a stake pool with slippage
+pub fn deposit_stake_with_slippage(
+    program_id: &Pubkey,
+    stake_pool: &Pubkey,
+    validator_list_storage: &Pubkey,
+    stake_pool_withdraw_authority: &Pubkey,
+    deposit_stake_address: &Pubkey,
+    deposit_stake_withdraw_authority: &Pubkey,
+    validator_stake_account: &Pubkey,
+    reserve_stake_account: &Pubkey,
+    pool_tokens_to: &Pubkey,
+    manager_fee_account: &Pubkey,
+    referrer_pool_tokens_account: &Pubkey,
+    pool_mint: &Pubkey,
+    token_program_id: &Pubkey,
+    minimum_pool_tokens_out: u64,
+) -> Vec<Instruction> {
+    deposit_stake_internal(
+        program_id,
+        stake_pool,
+        validator_list_storage,
+        None,
+        stake_pool_withdraw_authority,
+        deposit_stake_address,
+        deposit_stake_withdraw_authority,
+        validator_stake_account,
+        reserve_stake_account,
+        pool_tokens_to,
+        manager_fee_account,
+        referrer_pool_tokens_account,
+        pool_mint,
+        token_program_id,
+        Some(minimum_pool_tokens_out),
+    )
+}
+
+/// Creates instructions required to deposit into a stake pool, given a stake
+pub fn deposit_stake_with_authority(
+    program_id: &Pubkey,
+    stake_pool: &Pubkey,
+    validator_list_storage: &Pubkey,
+    stake_pool_deposit_authority: &Pubkey,
+    stake_pool_withdraw_authority: &Pubkey,
+    deposit_stake_address: &Pubkey,
+    deposit_stake_withdraw_authority: &Pubkey,
+    validator_stake_account: &Pubkey,
+    reserve_stake_account: &Pubkey,
+    pool_tokens_to: &Pubkey,
+    manager_fee_account: &Pubkey,
+    referrer_pool_tokens_account: &Pubkey,
+    pool_mint: &Pubkey,
+    token_program_id: &Pubkey,
+) -> Vec<Instruction> {
+    deposit_stake_internal(
+        program_id,
+        stake_pool,
+        validator_list_storage,
+        Some(stake_pool_deposit_authority),
+        stake_pool_withdraw_authority,
+        deposit_stake_address,
+        deposit_stake_withdraw_authority,
+        validator_stake_account,
+        reserve_stake_account,
+        pool_tokens_to,
+        manager_fee_account,
+        referrer_pool_tokens_account,
+        pool_mint,
+        token_program_id,
+        None,
+    )
+}
+
+/// Creates instructions required to deposit into a stake pool with slippage, given
+/// a stake account owned by the user. The difference with `deposit()` is that a deposit
+/// authority must sign this instruction, which is required for private pools.
+pub fn deposit_stake_with_authority_and_slippage(
+    program_id: &Pubkey,
+    stake_pool: &Pubkey,
+    validator_list_storage: &Pubkey,
+    stake_pool_deposit_authority: &Pubkey,
+    stake_pool_withdraw_authority: &Pubkey,
+    deposit_stake_address: &Pubkey,
+    deposit_stake_withdraw_authority: &Pubkey,
+    validator_stake_account: &Pubkey,
+    reserve_stake_account: &Pubkey,
+    pool_tokens_to: &Pubkey,
+    manager_fee_account: &Pubkey,
+    referrer_pool_tokens_account: &Pubkey,
+    pool_mint: &Pubkey,
+    token_program_id: &Pubkey,
+    minimum_pool_tokens_out: u64,
+) -> Vec<Instruction> {
+    deposit_stake_internal(
+        program_id,
+        stake_pool,
+        validator_list_storage,
+        Some(stake_pool_deposit_authority),
+        stake_pool_withdraw_authority,
+        deposit_stake_address,
+        deposit_stake_withdraw_authority,
+        validator_stake_account,
+        reserve_stake_account,
+        pool_tokens_to,
+        manager_fee_account,
+        referrer_pool_tokens_account,
+        pool_mint,
+        token_program_id,
+        Some(minimum_pool_tokens_out),
+    )
+}
+
+/// Creates instructions required to deposit SOL directly into a stake pool.
+fn deposit_sol_internal(
+    program_id: &Pubkey,
+    stake_pool: &Pubkey,
+    stake_pool_withdraw_authority: &Pubkey,
+    reserve_stake_account: &Pubkey,
+    lamports_from: &Pubkey,
+    pool_tokens_to: &Pubkey,
+    manager_fee_account: &Pubkey,
+    referrer_pool_tokens_account: &Pubkey,
+    pool_mint: &Pubkey,
+    token_program_id: &Pubkey,
+    sol_deposit_authority: Option<&Pubkey>,
+    lamports_in: u64,
+    minimum_pool_tokens_out: Option<u64>,
+) -> Instruction {
+    let mut accounts = vec![
+        AccountMeta::new(*stake_pool, false),
+        AccountMeta::new_readonly(*stake_pool_withdraw_authority, false),
+        AccountMeta::new(*reserve_stake_account, false),
+        AccountMeta::new(*lamports_from, false),
+        AccountMeta::new(*pool_tokens_to, false),
+        AccountMeta::new(*manager_fee_account, false),
+        AccountMeta::new(*referrer_pool_tokens_account, false),
+        AccountMeta::new(*pool_mint, false),
+        AccountMeta::new_readonly(system_program::id(), false),
+        AccountMeta::new_readonly(*token_program_id, false),
+    ];
+
+    if let Some(sol_deposit_authority) = sol_deposit_authority {
+        accounts.push(AccountMeta::new_readonly(*sol_deposit_authority, true));
+    }
+
+    if let Some(minimum_pool_tokens_out) = minimum_pool_tokens_out {
+        Instruction {
+            program_id: *program_id,
+            accounts,
+            data: StakePoolInstruction::DepositSolWithSlippage {
+                lamports_in,
+                minimum_pool_tokens_out,
+            }
+            .try_to_vec()
+            .unwrap(),
+        }
+    } else {
+        Instruction {
+            program_id: *program_id,
+            accounts,
+            data: StakePoolInstruction::DepositSol(lamports_in)
+                .try_to_vec()
+                .unwrap(),
+        }
+    }
+}
+
+/// Creates instruction to deposit SOL directly into a stake pool.
+pub fn deposit_sol(
+    program_id: &Pubkey,
+    stake_pool: &Pubkey,
+    stake_pool_withdraw_authority: &Pubkey,
+    reserve_stake_account: &Pubkey,
+    lamports_from: &Pubkey,
+    pool_tokens_to: &Pubkey,
+    manager_fee_account: &Pubkey,
+    referrer_pool_tokens_account: &Pubkey,
+    pool_mint: &Pubkey,
+    token_program_id: &Pubkey,
+    lamports_in: u64,
+) -> Instruction {
+    deposit_sol_internal(
+        program_id,
+        stake_pool,
+        stake_pool_withdraw_authority,
+        reserve_stake_account,
+        lamports_from,
+        pool_tokens_to,
+        manager_fee_account,
+        referrer_pool_tokens_account,
+        pool_mint,
+        token_program_id,
+        None,
+        lamports_in,
+        None,
+    )
+}
+
+/// Creates instruction to deposit SOL directly into a stake pool with slippage constraint.
+pub fn deposit_sol_with_slippage(
+    program_id: &Pubkey,
+    stake_pool: &Pubkey,
+    stake_pool_withdraw_authority: &Pubkey,
+    reserve_stake_account: &Pubkey,
+    lamports_from: &Pubkey,
+    pool_tokens_to: &Pubkey,
+    manager_fee_account: &Pubkey,
+    referrer_pool_tokens_account: &Pubkey,
+    pool_mint: &Pubkey,
+    token_program_id: &Pubkey,
+    lamports_in: u64,
+    minimum_pool_tokens_out: u64,
+) -> Instruction {
+    deposit_sol_internal(
+        program_id,
+        stake_pool,
+        stake_pool_withdraw_authority,
+        reserve_stake_account,
+        lamports_from,
+        pool_tokens_to,
+        manager_fee_account,
+        referrer_pool_tokens_account,
+        pool_mint,
+        token_program_id,
+        None,
+        lamports_in,
+        Some(minimum_pool_tokens_out),
+    )
+}",High,"Add instructions that allow the user to specify the minimum amount of tokens they expect to receive. In order to protect against manager fee hikes, a user can use the following instructions and specify a slippage parameter. If the subsequent fee deduction reduces the received amount below this value, the instruction will abort: 1. DepositStakeWithSlippage 2. WithdrawStakeWithSlippage 3. DepositSolWithSlippage 4. WithdrawSolWithSlippage","https://github.com/solana-labs/solana-program-library/pull/3980/files, https://file.notion.so/f/f/97ab6450-64d1-4350-a5cf-a0c0c607f5c4/f5079737-734d-4b73-88a5-4c00eb20015d/Solana_Stake_Pool_audit_final.pdf?table=block&id=353af6fc-8c19-4e59-aefc-3aebc813b926&spaceId=97ab6450-64d1-4350-a5cf-a0c0c607f5c4&expirationTimestamp=1743307200000&signature=ga0AQbGGoM7PDHTRtRK5aEOAatzTupp7GT5nQAkWS80&downloadName=Solana+Stake+Pool+Audit+Report.pdf",High
 Sol-172,"Front-Run Deposits To Steal Pool Tokens Description There is no delay mechanism on updating deposit fees and an upper bound of 100%. A user that submits a large deposit could be front-run by a pool manager who sets the fee close to 100% (ensuring that user still receives 1 pool token), receives almost the full value of the deposit, and then reduces the fee afterward.","rust
 pub fn withdraw_stake(
     program_id: &Pubkey,
@@ -12074,7 +14572,65 @@ pub fn withdraw_stake_with_slippage(
 Sol-173,"Fee Update Delay Bypass Description Certain fees (StakeWithdrawal, SolWithdrawal, Epoch) can only be updated in the next epoch. In the current implementation, the manager can update the fee at the end of the current epoch and then immediately apply the fee at the start of the next epoch. For example, a pool manager could use this technique to instantaneously apply a withdrawal fee of 0.1% (the baseline fee).","rust
 if fee.can_only_change_next_epoch() && stake_pool.last_update_epoch < clock.epoch {
     return Err(StakePoolError::StakeListAndPoolOutOfDate.into());
-}",Error fetching AI explanation: list index out of range,Medium,"To give users sufficient time to adapt to changing fees, it would likely make sense to ensure the proposed fee is blocked for at least one full epoch.","https://github.com/solana-labs/solana-program-library/pull/3979/files#diff-0d164bba80f160b0f3813ac32c2709f64e62b196cdc2eee8bd54422f73da1e4a, https://file.notion.so/f/f/97ab6450-64d1-4350-a5cf-a0c0c607f5c4/f5079737-734d-4b73-88a5-4c00eb20015d/Solana_Stake_Pool_audit_final.pdf?table=block&id=353af6fc-8c19-4e59-aefc-3aebc813b926&spaceId=97ab6450-64d1-4350-a5cf-a0c0c607f5c4&expirationTimestamp=1743307200000&signature=ga0AQbGGoM7PDHTRtRK5aEOAatzTupp7GT5nQAkWS80&downloadName=Solana+Stake+Pool+Audit+Report.pdf",High
+}","/// Wrapper type that ""counts down"" epochs, which is Borsh-compatible with the
+/// native `Option`
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, BorshSerialize, BorshDeserialize, BorshSchema)]
+pub enum FutureEpoch<T> {
+    /// Nothing is set
+    None,
+    /// Value is ready after the next epoch boundary
+    One(T),
+    /// Value is ready after two epoch boundaries
+    Two(T),
+}
+
+impl<T> Default for FutureEpoch<T> {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+impl<T> FutureEpoch<T> {
+    /// Create a new value to be unlocked in a two epochs
+    pub fn new(value: T) -> Self {
+        Self::Two(value)
+    }
+}
+
+impl<T: Clone> FutureEpoch<T> {
+    /// Update the epoch, to be done after `get`ting the underlying value
+    pub fn update_epoch(&mut self) {
+        match self {
+            Self::None => {},
+            Self::One(_) => {
+                // The value has waited its last epoch
+                *self = Self::None;
+            }
+            // The value still has to wait one more epoch after this
+            Self::Two(v) => {
+                *self = Self::One(v.clone());
+            }
+        }
+    }
+
+    /// Get the value if it's ready, which is only at `One` epoch remaining
+    pub fn get(&self) -> Option<&T> {
+        match self {
+            Self::None | Self::Two(_) => None,
+            Self::One(v) => Some(v),
+        }
+    }
+}
+
+impl<T> From<FutureEpoch<T>> for Option<T> {
+    fn from(v: FutureEpoch<T>) -> Option<T> {
+        match v {
+            FutureEpoch::None => None,
+            FutureEpoch::One(inner) | FutureEpoch::Two(inner) => Some(inner),
+        }
+    }
+}",Medium,"To give users sufficient time to adapt to changing fees, it would likely make sense to ensure the proposed fee is blocked for at least one full epoch.","https://github.com/solana-labs/solana-program-library/pull/3979/files#diff-0d164bba80f160b0f3813ac32c2709f64e62b196cdc2eee8bd54422f73da1e4a, https://file.notion.so/f/f/97ab6450-64d1-4350-a5cf-a0c0c607f5c4/f5079737-734d-4b73-88a5-4c00eb20015d/Solana_Stake_Pool_audit_final.pdf?table=block&id=353af6fc-8c19-4e59-aefc-3aebc813b926&spaceId=97ab6450-64d1-4350-a5cf-a0c0c607f5c4&expirationTimestamp=1743307200000&signature=ga0AQbGGoM7PDHTRtRK5aEOAatzTupp7GT5nQAkWS80&downloadName=Solana+Stake+Pool+Audit+Report.pdf",High
 Sol-174,"Inaccurate In-Memory Balance Updates. transfer and withdraw in code-vm are vulnerable to incorrect accounting when the source and destination accounts are the same. In scenarios where the source account and the destination account are identical, the program logic may process both operations in memory without distinguishing between the two. This creates a situation where only the final ”greater” destination value (after adding funds) is written back to storage, without accurately subtracting the funds first.","rust
 /*
 Instruction data:
@@ -13311,7 +15867,53 @@ pub struct CreatePool<'info> {
 
     /// The Solana system program. 
     pub system_program: Program<'info, System>, 
-}",Error fetching AI explanation: list index out of range,Medium,Apply this constraint to the incoming arguments ( args.config.pool_type ) instead of the uninitialized pool.config.pool_type .,https://github.com/tensor-foundation/amm/commit/87ad4a70bcbcbec2ea0443ec5bbe2fb680aa9574#diff-94e6998cd6c2e0f422b4f57f96da650b1ac8527f5b036f3e8d50c3c00c96633d,High
+}","/// Instruction accounts.
+#[derive(Accounts)]
+#[instruction(args: CreatePoolArgs)]
+pub struct CreatePool<'info> {
+    /// The account that pays for the rent to open the pool. This will be stored on the pool
+    /// so it can be refunded when the pool is closed.
+    #[account(mut)]
+    pub rent_payer: Signer<'info>,
+
+    /// The owner of the pool will be stored and used to control permissioned pool instructions.
+    pub owner: Signer<'info>,
+
+    /// The pool state account.
+    #[account(
+        init,
+        payer = rent_payer,
+        space = Pool::SIZE,
+        seeds = [
+            b""pool"",
+            owner.key().as_ref(),
+            args.pool_id.as_ref(),
+        ],
+        bump,
+    )]
+    pub pool: Box<Account<'info, Pool>>,
+
+    /// The whitelist that gatekeeps which NFTs can be bought or sold with this pool.
+    #[account(
+        seeds = [
+            b""whitelist"",
+            &whitelist.namespace.as_ref(),
+            &whitelist.uuid
+        ],
+        bump,
+        seeds::program = whitelist_program::ID
+    )]
+    pub whitelist: Box<Account<'info, WhitelistV2>>,
+
+    #[account(
+        has_one = owner @ ErrorCode::WrongOwner,
+        constraint = args.config.pool_type != PoolType::NFT @ ErrorCode::CannotUseSharedEscrow,
+    )]
+    pub shared_escrow: Option<Account<'info, MarginAccount>>,
+
+    /// The Solana system program.
+    pub system_program: Program<'info, System>,
+}",Medium,Apply this constraint to the incoming arguments ( args.config.pool_type ) instead of the uninitialized pool.config.pool_type .,https://github.com/tensor-foundation/amm/commit/87ad4a70bcbcbec2ea0443ec5bbe2fb680aa9574#diff-94e6998cd6c2e0f422b4f57f96da650b1ac8527f5b036f3e8d50c3c00c96633d,High
 Sol-186,"Missing Account Authenticity Checks. In shared_accounts within the MplxShared structure, the metadata and edition accounts are essential to validate an NFT’s properties, such as its uniqueness and associated data. The vulnerability concerns the lack of seed checks to verify the existence of the metadata and edition for the provided mint. Additionally, in the transfer functionality, only the metadata is verified, and the master_edition is not utilized for the non-pNFT case. Thus, the master_edition account is not utilized or checked in the non-pNFT case. This is crucial because without verifying the existence of the master edition, there is no confirmation that the mint is truly non-fungible.","rust
 #[derive(Accounts)]
 pub struct MplxShared<'info> {
@@ -14198,7 +16800,7 @@ pub fn process_burn(
     )?;
     
     Ok(()) 
-}",Error fetching AI explanation: list index out of range,Critical,Remove the burn instruction from the withdrawal process.,https://github.com/jito-foundation/restaking/pull/137/files,High
+}",Remove Entire Code,Critical,Remove the burn instruction from the withdrawal process.,https://github.com/jito-foundation/restaking/pull/137/files,High
 Sol-196,"Slashing-Induced Share Dilution. The vulnerability arises when the vault’s underlying tokens have been completely slashed, resulting in a balance of zero deposited tokens but still having outstanding VRT tokens in circulation. In such a scenario, the current implementation of calculate_vrt_mint_amount may result in an unfair outcome for new depositors. If tokens_deposited is zero due to slashing, but there are still outstanding VRT tokens, any new depositor will encounter the initial check: if self.tokens_deposited() == 0 . This check then returns the amount deposited as the minted VRT without considering the existing VRT supply. In effect, this first depositor is assigned an amount of VRT equal to their deposited tokens, but the minted VRT does not accurately reflect their share of ownership because of the outstanding VRT tokens that others still hold. Thus, the first depositor effectively donates their deposited tokens to prior VRT holders without receiving a fair share of VRT . Instead of gaining proportional ownership, their assets unfairly inflate the value of pre-existing VRT tokens. If the vault undergoes multiple slashes, it will progressively reduce tokens_deposited while outstanding VRT tokens remain the same, deflating the value of the VRT token. Consequently, there may be a risk of overflow in the share calculations due to needing to mint too many shares.","rust
 restaking/vault_core/src/vault.rs 
 
@@ -14285,7 +16887,7 @@ fn slash_and_update_vault(
     slash_amount: u64,
 ) -> ProgramResult {
     /*...*/
-}",Error fetching AI explanation: list index out of range,High,Remove the slashing instruction.,https://github.com/jito-foundation/restaking/pull/141/files#diff-4200ef7af2b6c1734be1438ea2ea643497061bf91824dfd16519556440b81b3e,High
+}",Remove Entire Code (vault_program/src/slash.rs),High,Remove the slashing instruction.,https://github.com/jito-foundation/restaking/pull/141/files#diff-4200ef7af2b6c1734be1438ea2ea643497061bf91824dfd16519556440b81b3e,High
 Sol-197,"DOS Due to Withdrawal Ticket Desynchronization. There is a potential Denial of Service (DoS) attack in vault_program::process_burn_withdrawal_ticket that may occur if an attacker manipulates the state of the system by directly sending VRT tokens to the vault_staker_withdrawal_ticket_token_account . This will result in inconsistencies between the amount of VRT tokens recorded in the token account and the amount recorded in the VaultStakerWithdrawalTicket account. The direct transfer will increase the balance of tokens in the token account without updating VaultStakerWithdrawalTicket , creating a desynchronization between these two values since vault_staker_withdrawal_ticket.vrt_amount() would still reflect the original amount of tokens expected by the withdrawal process. close_account checks that the amount stored in the token account is zero before allowing the account to be closed. If the amounts are out of sync, close_account operation may fail, as it verifies that the account’s balance is zero. This effectively prevents the staker from closing their withdrawal ticket and claiming tokens, resulting in a denial-of-service scenario.","rust
 /// Burns the withdrawal ticket, transferring the assets to the staker and closing the withdrawal ticket. 
 
@@ -15204,7 +17806,125 @@ pub fn update(
     /// ...
     /// other part of code
     /// ...
-}",Error fetching AI explanation: list index out of range,High,Include logic in the update function to update the canopy nodes alongside the main tree structure whenever a leaf node is modified.,https://github.com/Lightprotocol/light-protocol/commit/587ca5f39203cfca1591fde6de02eb2911a5c258#diff-557b7f9d167847113d9dbe17a08803a31d9139ea1f7420cedfa19f8b360f1ee4,High
+}","merkle-tree/concurrent/src/lib.rs
+:/// Updates the leaf under `leaf_index` with the `new_leaf` value.
+/// 1. Computes the new path and root from `new_leaf` and Merkle proof (`proof`).
+/// 2. Stores the new path as the latest changelog entry and increments the latest changelog index.
+/// 3. Stores the latest root and increments the latest root index.
+/// 4. If new leaf is at the rightmost index, stores it as the new rightmost leaf and stores
+///    the Merkle proof as the new rightmost proof.
+///
+/// # Validation
+///
+/// This method doesn't validate the proof. Caller is responsible for doing that before.
+fn update_leaf_in_tree(
+    &mut self,
+    new_leaf: &[u8; 32],
+    leaf_index: usize,
+    proof: &BoundedVec<[u8; 32]>,
+) -> Result<(usize, usize), ConcurrentMerkleTreeError> {
+    let mut current_node = *new_leaf;
+    let mut changelog_path = [[0u8; 32]; HEIGHT];
+
+    for (level, sibling) in proof.iter().enumerate() {
+        changelog_path[level] = current_node;
+        current_node = compute_parent_node::<H>(&current_node, sibling, leaf_index, level)?;
+    }
+
+    self.inc_sequence_number()?;
+
+    let changelog_entry = ChangelogEntry::new(current_node, changelog_path, leaf_index);
+
+    self.roots.push(current_node);
+
+    // Check if the leaf is the last leaf in the tree.
+    if self.next_index() < (1 << self.height) {
+        changelog_entry.update_proof(self.next_index(), &mut self.filled_subtrees)?;
+        // Check if we updated the rightmost leaf.
+        if leaf_index >= self.current_index() {
+            self.set_rightmost_leaf(new_leaf);
+        }
+    }
+
+    self.changelog.push(changelog_entry);
+
+    if self.canopy_depth > 0 {
+        self.update_canopy(self.changelog.last_index(), 1);
+    }
+
+    Ok((self.changelog.last_index(), self.sequence_number()))
+}
+
+/// Replaces the `old_leaf` under the `leaf_index` with a `new_leaf`, using
+/// the given `proof` and `changelog_index` (pointing to the changelog entry
+/// which was the newest at the time of preparing the proof).
+#[inline(never)]
+pub fn update(
+    &mut self,
+    changelog_index: usize,
+    old_leaf: &[u8; 32],
+    new_leaf: &[u8; 32],
+    leaf_index: usize,
+    proof: &mut BoundedVec<[u8; 32]>,
+) -> Result<(usize, usize), ConcurrentMerkleTreeError> {
+    let expected_proof_len = self.height - self.canopy_depth;
+
+    if proof.len() != expected_proof_len {
+        return Err(ConcurrentMerkleTreeError::InvalidProofLength(
+            expected_proof_len,
+            proof.len(),
+        ));
+    }
+
+    if leaf_index >= self.next_index() {
+        return Err(ConcurrentMerkleTreeError::CannotUpdateEmpty);
+    }
+
+    if self.canopy_depth > 0 {
+        self.update_proof_from_canopy(leaf_index, proof)?;
+    }
+
+    if changelog_index != self.changelog_index() {
+        self.update_proof_from_changelog(changelog_index, leaf_index, proof)?;
+    }
+
+    self.validate_proof(old_leaf, leaf_index, proof)?;
+    self.update_leaf_in_tree(new_leaf, leaf_index, proof)
+}merkle-tree/reference/src/lib.rs:/// Number of nodes to include in canopy, based on `canopy_depth`.
+pub fn canopy_size(&self) -> usize {
+    (1 << (self.canopy_depth + 1)) - 2
+}
+
+fn update_upper_layers(&mut self, mut i: usize) -> Result<(), HasherError> {
+    for level in 1..self.height {
+        i /= 2;
+        // ... (rest of the function implementation assumed to be unchanged)
+    }
+    Ok(())
+}
+
+pub fn get_canopy(&self) -> Result<BoundedVec<[u8; 32]>, BoundedVecError> {
+    if self.canopy_depth == 0 {
+        return Ok(BoundedVec::with_capacity(0));
+    }
+
+    let mut canopy = BoundedVec::with_capacity(self.canopy_size());
+    let mut num_nodes_in_level = 2;
+
+    for i in 0..self.canopy_depth {
+        let level = self.height - 1 - i;
+        for j in 0..num_nodes_in_level {
+            let node = self.layers[level]
+                .get(j)
+                .cloned()
+                .unwrap_or(H::zero_bytes()[level]);
+            canopy.push(node)?;
+        }
+        num_nodes_in_level *= 2;
+    }
+
+    Ok(canopy)
+}",High,Include logic in the update function to update the canopy nodes alongside the main tree structure whenever a leaf node is modified.,https://github.com/Lightprotocol/light-protocol/commit/587ca5f39203cfca1591fde6de02eb2911a5c258#diff-557b7f9d167847113d9dbe17a08803a31d9139ea1f7420cedfa19f8b360f1ee4,High
 Sol-207,"Hash Collision in Merkle Tree. This vulnerability arises from an assumption in create_cpi_accounts_and_instruction_data that all remaining accounts in the ctx.remaining_accounts vector are unique. Specifically, it assumes that different Merkle tree accounts should appear only once in the vector.  However, if an attacker manipulates ctx.remaining_accounts to include the same Merkle tree account multiple times (e.g., remaining_accounts[0] = tree_key and remaining_accounts[1] = tree_key), then different output_compressed_accounts may reference the same tree but at different indices.  Each time merkle_tree_index changes between iterations, the value of num_leaves_in_tree is reset to zero. As a result, output_compressed_account_indices[j] for both compressed accounts will be identical, causing multiple compressed accounts to share the same leaf index in the same tree.  This leads to identical leaf hashes being inserted into the tree at the same index for different accounts—resulting in a hash collision in the Merkle tree.","rust
 /// Creates CPI accounts, instruction data, and performs checks.
 /// - Merkle tree indices must be in order.
@@ -15752,7 +18472,7 @@ pub fn dequeue_at(
         }
         None => Ok(None),
     }
-}",Error fetching AI explanation: list index out of range,Medium,Add a check to ensure that the next_index of the element at low_element_index actually points to the element at index before proceeding with the removal.,https://github.com/Lightprotocol/light-protocol/commit/92930cd7b5c3f8c3caede873856b26cef6b69197,High
+}",Remove this code,Medium,Add a check to ensure that the next_index of the element at low_element_index actually points to the element at index before proceeding with the removal.,https://github.com/Lightprotocol/light-protocol/commit/92930cd7b5c3f8c3caede873856b26cef6b69197,High
 Sol-212,"Improper Equality Comparison. The CyclicBoundedVec::eq function compares the underlying data of two vectors without accounting for the cyclic nature of the vector, which may result in incorrect outcomes.  This occurs because the data in a CyclicBoundedVec may be stored in a non-contiguous manner due to cyclic indexing. As a result, the order of elements in the underlying data array may not match the logical order of elements in the vector.  The function creates a slice from the start of self.data up to self.length and iterates over its elements. It then compares these elements with those from other.data. However, this approach assumes that self.data and other.data are in the same order, which is not necessarily the case in a cyclic vector.  Due to cyclic indexing, and particularly the positions of first_index and last_index, the logical order of the elements may differ from their physical layout in memory, making direct comparison unreliable.",Error fetching AI explanation: list index out of range,"rust
 /// `CyclicBoundedVec` is a wrapper around [`Vec`](std::vec::Vec) which:
 ///
@@ -15931,7 +18651,167 @@ pub unsafe fn copy_from_bytes(
        
        // The remaining body of the function
        // ...
-}",Error fetching AI explanation: list index out of range,Medium,Ensure there construction processre stores the first_index and last_index of the CyclicBoundedVec .,https://github.com/Lightprotocol/light-protocol/commit/203296b6510679e7ca8e477759f8347c9ea496fb,High
+}","/// This method is meant to be used mostly in Solana programs, where memory
+/// constraints are tight and we want to make sure no data is copied.
+pub fn from_bytes_copy(bytes: &[u8]) -> Result<Self, IndexedMerkleTreeError> {
+    let (merkle_tree, mut offset) =
+        ConcurrentMerkleTreeCopy::<H, HEIGHT>::struct_from_bytes_copy(bytes)?;
+
+    let indexed_changelog_metadata: CyclicBoundedVecMetadata =
+        unsafe { read_value_at(bytes, &mut offset) };
+
+    let expected_size = IndexedMerkleTree::<H, I, HEIGHT>::size_in_account(
+        merkle_tree.height,
+        merkle_tree.changelog.capacity(),
+        merkle_tree.roots.capacity(),
+        merkle_tree.canopy_depth,
+        indexed_changelog_metadata.capacity(),
+    );
+
+    if bytes.len() < expected_size {
+        return Err(IndexedMerkleTreeError::ConcurrentMerkleTree(
+            ConcurrentMerkleTreeError::BufferSize(expected_size, bytes.len()),
+        ));
+    }
+
+    let indexed_changelog =
+        unsafe { read_cyclic_bounded_vec_at(bytes, &mut offset, &indexed_changelog_metadata) };
+
+    Ok(Self(IndexedMerkleTree {
+        merkle_tree,
+        indexed_changelog,
+        _index: PhantomData,
+    }))
+}utils/src/offset.rs:use std::{mem, ptr};
+
+use light_bounded_vec::{
+    BoundedVec,
+    BoundedVecMetadata,
+    CyclicBoundedVec,
+    CyclicBoundedVecMetadata,
+};
+
+/// Casts a part of provided `bytes` buffer with the given `offset` to a
+/// mutable pointer to `T`.
+///
+/// Should be used for single values.
+///
+/// # Safety
+///
+/// This is highly unsafe. This function doesn't ensure alignment and
+/// correctness of provided buffer. The responsibility of such checks is on
+/// the caller.
+pub unsafe fn read_ptr_at<T>(bytes: &[u8], offset: &mut usize) -> *mut T {
+    let size = mem::size_of::<T>();
+    let ptr = bytes[*offset..*offset + size].as_ptr() as *mut T;
+    *offset += size;
+    ptr
+}
+
+/// Casts a part of provided `bytes` buffer with the given `offset` to a
+/// mutable pointer to `T`.
+///
+/// Should be used for array-type sequences.
+///
+/// # Safety
+///
+/// This is highly unsafe. This function doesn't ensure alignment and
+/// correctness of provided buffer. The responsibility of such checks is on
+/// the caller.
+pub unsafe fn read_array_like_ptr_at<T>(
+    bytes: &[u8],
+    offset: &mut usize,
+    len: usize,
+) -> *mut T {
+    let size = mem::size_of::<T>() * len;
+    let ptr = bytes[*offset..*offset + size].as_ptr() as *mut T;
+    *offset += size;
+    ptr
+}
+
+/// Creates a copy of value of type `T` based on the provided `bytes` buffer.
+///
+/// # Safety
+///
+/// This is highly unsafe. This function doesn't ensure alignment and
+/// correctness of provided buffer. The responsibility of such checks is on
+/// the caller.
+pub unsafe fn read_value_at<T>(bytes: &[u8], offset: &mut usize) -> T
+where
+    T: Clone,
+{
+    let size = mem::size_of::<T>();
+    let ptr = bytes[*offset..*offset + size].as_ptr() as *const T;
+    *offset += size;
+    // (*ptr).clone()
+    ptr::read(ptr)
+}
+
+/// Creates a `BoundedVec` from the sequence of values provided in `bytes` buffer.
+///
+/// # Safety
+///
+/// This is highly unsafe. This function doesn't ensure alignment and
+/// correctness of provided buffer. The responsibility of such checks is on
+/// the caller.
+pub unsafe fn read_bounded_vec_at<T>(
+    bytes: &[u8],
+    offset: &mut usize,
+    metadata: &BoundedVecMetadata,
+) -> BoundedVec<T>
+where
+    T: Clone,
+{
+    let size = mem::size_of::<T>() * metadata.capacity();
+    let ptr = bytes[*offset..*offset + size].as_ptr() as *const T;
+
+    let mut vec = BoundedVec::with_capacity(metadata.capacity());
+    for i in 0..metadata.length() {
+        let val = ptr::read(ptr.add(i));
+        // PANICS: We ensured the bounds.
+        vec.push(val).unwrap();
+    }
+
+    *offset += size;
+    vec
+}
+
+/// Creates a `CyclicBoundedVec` from the sequence of values provided in
+/// `bytes` buffer.
+///
+/// # Safety
+///
+/// This is highly unsafe. This function doesn't ensure alignment and
+/// correctness of provided buffer. The responsibility of such checks is on
+/// the caller.
+pub unsafe fn read_cyclic_bounded_vec_at<T>(
+    bytes: &[u8],
+    offset: &mut usize,
+    metadata: &CyclicBoundedVecMetadata,
+) -> CyclicBoundedVec<T>
+where
+    T: Clone,
+{
+    let size = mem::size_of::<T>() * metadata.capacity();
+    let ptr = bytes[*offset..*offset + size].as_ptr() as *const T;
+
+    let mut vec = CyclicBoundedVec::with_capacity(metadata.capacity());
+    for i in 0..metadata.length() {
+        let val = ptr::read(ptr.add(i));
+        vec.push(val);
+    }
+
+    *offset += size;
+    vec
+}
+
+/// Writes provided `data` into provided `bytes` buffer with the given
+/// `offset`.
+pub fn write_at<T>(bytes: &mut [u8], data: &[u8], offset: &mut usize) {
+    let size = mem::size_of::<T>();
+    bytes[*offset..*offset + size].copy_from_slice(data);
+    *offset += size;
+}",Medium,Ensure there construction processre stores the first_index and last_index of the CyclicBoundedVec .,https://github.com/Lightprotocol/light-protocol/commit/203296b6510679e7ca8e477759f8347c9ea496fb,High
 Sol-215,"Inconsistency in Prime Number Calculation The vulnerability arises from how the find_next_prime function adjusts n to find the next prime number greater than n.  All prime numbers greater than three are either of the form 6k + 1 or 6k + 5. When (remainder != 0.0), the function currently adjusts n by setting it to n + 6.0 - remainder, which ensures that n becomes the nearest number of the form 6k + 5.  However, the function does not explicitly check for a prime of the form 6k + 1. As a result, it may skip valid primes by jumping ahead to the next number of the form 6k + 5, even when the given number is already a prime in the form 6k + 1.  This leads to incorrect identification of the next prime number in some cases.  ","rust
 /// Finds the lowest prime number which is greater than the provided number `n`.
 pub fn find_next_prime(mut n: f64) -> f64 {
@@ -16491,7 +19371,29 @@ pub fn handler(ctx: Context<BuyToken>, amount: u64, max_price: u64) -> Result<u6
     let follows_token_price_after_all_fees = follows_price_after_wrapper_fees.try_add(follows_fees_lamports.total());
     
     // [...]
-}",Error fetching AI explanation: list index out of range,High,Ensure the Follows fees are calculated based on the original buy price (follows_price) before any fees are added.,https://file.notion.so/f/f/97ab6450-64d1-4350-a5cf-a0c0c607f5c4/e85d7b3e-dc47-4a17-b41e-53cf39227528/follows_audit_final.pdf?table=block&id=fecda538-7053-41b1-8ccf-67334c1f5932&spaceId=97ab6450-64d1-4350-a5cf-a0c0c607f5c4&expirationTimestamp=1742954400000&signature=lqLyDrQKe9VQNYLnkievdea6Kk8SB570z546v8GVUwI&downloadName=follows_audit_final.pdf,High
+}","// Simulation will return price after all fees
+pub fn handler(
+    ctx: Context<BuyToken>,
+    amount: u64,
+    max_price: u64,
+) -> Result<u64> {
+    // [...] (other code assumed to be here)
+
+    let follows_price = ctx.accounts.token_info.get_token_buy_price(amount)?;
+    let follows_fees_lamports = ctx.accounts
+        .follows_platform_info
+        .get_fees_lamports(follows_price);
+    let wrapper_fees_lamports = ctx.accounts
+        .platform_info
+        .get_fees_lamports(follows_price);
+    let follows_price_after_all_fees = follows_price
+        .try_add(wrapper_fees_lamports.total())?
+        .try_add(follows_fees_lamports.total())?;
+
+    // [...] (other code assumed to be here)
+
+    Ok(follows_price_after_all_fees)  // Assumed return based on context
+}",High,Ensure the Follows fees are calculated based on the original buy price (follows_price) before any fees are added.,https://file.notion.so/f/f/97ab6450-64d1-4350-a5cf-a0c0c607f5c4/e85d7b3e-dc47-4a17-b41e-53cf39227528/follows_audit_final.pdf?table=block&id=fecda538-7053-41b1-8ccf-67334c1f5932&spaceId=97ab6450-64d1-4350-a5cf-a0c0c607f5c4&expirationTimestamp=1742954400000&signature=lqLyDrQKe9VQNYLnkievdea6Kk8SB570z546v8GVUwI&downloadName=follows_audit_final.pdf,High
 Sol-220,"Improper Calculation of Fees  The function quote::get_pre_fee_amount_ld invokes calculate_pre_fee_amount to compute amount_sent_ld. However, there is an issue within calculate_pre_fee_amount when transfer_fee_basis_points is equal to MAX_FEE_BASIS_POINTS, which represents a 100% fee.  In such a case, the function consistently returns zero as the pre-fee amount. This is problematic because, under a 100% fee rate, the correct pre-fee amount should account for the fact that the entire post-fee amount would be consumed by the fee.","rust
 pub fn calculate_pre_fee_amount(&self, post_fee_amount: u64) -> Option<u64> { 
     let maximum_fee = u64::from(self.maximum_fee);         
@@ -16620,7 +19522,73 @@ pub fn transfer_with_split_proofs(
             context_state_account_authority_info.clone(),
         ],)?; 
     //Similarly, cipher text validity proof and range proof context state ,→ accounts are also closed [...] 
-}",Error fetching AI explanation: list index out of range,Medium,"Modify the conditions in process_transfer, verify_transfer_with_fee_proof, verify_transfer_proof and the structuring of accounts in transfer_with_split_proofs, such that the new conditions accurately reflect the order of accounts as listed in transfer_with_split_proofs.","https://github.com/solana-labs/solana-program-library/pull/5931/files#diff-2595d3cfe17c6e4ddac286e86b3fadfcdda4a44dbd1259890b94ba105fac63e3L1396, https://file.notion.so/f/f/97ab6450-64d1-4350-a5cf-a0c0c607f5c4/e21cbb09-5ce7-48c8-954e-5077c486a579/solana_token22_audit_final.pdf?table=block&id=88fc9b14-b183-49ee-aa0a-29c29c1eaf89&spaceId=97ab6450-64d1-4350-a5cf-a0c0c607f5c4&expirationTimestamp=1742961600000&signature=H_I1MmWaBTT1ZTabCmBV6FDaHowAV7WGiNbDzY0_3Yc&downloadName=solana_token22_audit_final.pdf",High
+}","/// Create a `TransferWithSplitProof` instruction without fee
+#[allow(clippy::too_many_arguments)]
+#[cfg(not(target_os = ""solana""))]
+pub fn transfer_with_split_proofs(
+    token_program_id: &Pubkey,
+    source_token_account: &Pubkey,
+    mint: &Pubkey,
+    destination_token_account: &Pubkey,
+    new_source_decryptable_available_balance: DecryptableBalance,
+    source_account_authority: &Pubkey,
+    context_accounts: TransferSplitContextStateAccounts,
+    source_decrypt_handles: &SourceDecryptHandles,
+) -> Result<Instruction, ProgramError> {
+    check_program_account(token_program_id)?;
+
+    let mut accounts = vec![
+        AccountMeta::new(*source_token_account, false),
+        AccountMeta::new_readonly(*mint, false),
+        AccountMeta::new(*destination_token_account, false),
+    ];
+
+    let close_split_context_state_on_execution =
+        if let Some(close_split_context_state_on_execution_accounts) =
+            context_accounts.close_split_context_state_accounts
+        {
+            // If `close_split_context_state_accounts` is set, then all context state
+            // accounts must be `writable`.
+            accounts.push(AccountMeta::new(*context_accounts.equality_proof, false));
+            accounts.push(AccountMeta::new(
+                *context_accounts.ciphertext_validity_proof,
+                false,
+            ));
+            accounts.push(AccountMeta::new(*context_accounts.range_proof, false));
+            accounts.push(AccountMeta::new(
+                *close_split_context_state_on_execution_accounts.lamport_destination,
+                false,
+            ));
+            accounts.push(AccountMeta::new_readonly(*context_accounts.authority, true));
+            accounts.push(AccountMeta::new_readonly(
+                *close_split_context_state_on_execution_accounts.zk_token_proof_program,
+                false,
+            ));
+            accounts.push(AccountMeta::new_readonly(*source_account_authority, true));
+            true
+        } else {
+            // If `close_split_context_state_accounts` is not set, then context state
+            // accounts can be read-only.
+            accounts.push(AccountMeta::new_readonly(
+                *context_accounts.equality_proof,
+                false,
+            ));
+            accounts.push(AccountMeta::new_readonly(
+                *context_accounts.ciphertext_validity_proof,
+                false,
+            ));
+            accounts.push(AccountMeta::new_readonly(
+                *context_accounts.range_proof,
+                false,
+            ));
+            accounts.push(AccountMeta::new_readonly(*source_account_authority, true));
+            false
+        };
+
+    // Note: Function appears incomplete in the provided snippet.
+    // Typically, this would return an Instruction wrapped in Ok()
+    // Ok(Instruction { ... })
+}",Medium,"Modify the conditions in process_transfer, verify_transfer_with_fee_proof, verify_transfer_proof and the structuring of accounts in transfer_with_split_proofs, such that the new conditions accurately reflect the order of accounts as listed in transfer_with_split_proofs.","https://github.com/solana-labs/solana-program-library/pull/5931/files#diff-2595d3cfe17c6e4ddac286e86b3fadfcdda4a44dbd1259890b94ba105fac63e3L1396, https://file.notion.so/f/f/97ab6450-64d1-4350-a5cf-a0c0c607f5c4/e21cbb09-5ce7-48c8-954e-5077c486a579/solana_token22_audit_final.pdf?table=block&id=88fc9b14-b183-49ee-aa0a-29c29c1eaf89&spaceId=97ab6450-64d1-4350-a5cf-a0c0c607f5c4&expirationTimestamp=1742961600000&signature=H_I1MmWaBTT1ZTabCmBV6FDaHowAV7WGiNbDzY0_3Yc&downloadName=solana_token22_audit_final.pdf",High
 Sol-222,"Missing Side Check On Market Vault Account. The vulnerability is related to a potential mismatch between the side of an order and the market vault utilized for depositing assets in place_order. place_order is responsible for validating and placing a new order in a trading market, ensuring the calculation of the required deposit amount, and transferring assets between the trader’s account and the market’s vault. It is crucial to ensure that the deposit and withdrawal of assets into and from a market vault are consistent with the side of the order, i.e., a bid or an ask order. The issue arises since there is no check to ensure that the market vault account utilized for depositing assets (ctx.accounts.market_vault) matches the side of the order, as seen in the attached code snippet. As a result, an attacker may place a bid order but use an ask-side market vault for depositing assets (or vice versa). This mismatch may result in the attacker draining funds from the market vault without providing the expected assets in return. This imbalance in the market vault disrupts the fairness and integrity of the trading system, resulting in financial losses for legitimate traders. Proof of Concept 1. Trader A places a legitimate bid order to buy one BTC and deposits 10,000 USD into the market vault (as expected for a bid order). 2. Trader B exploits the vulnerability by placing a bid order to buy one BTC but intentionally uses an ask-side market vault (containing BTC) for depositing assets. 3. The attacker’s bid order is accepted due to the lack of a check to ensure that the market vault matches the side of the order. 4. The attacker’s order executes, and they receive one BTC from Trader A’s legitimate order. However, the attacker never deposited the expected USD into the market vault. 5. As a result, Trader A is left with 10,000 USD less in the market vault (as expected), but Trader B never provided the expected USD. This imbalance leaves the market vault with less USD and more BTC.","rust
 pub fn place_order(
     ctx: Context<PlaceOrder>, 
@@ -18118,7 +21086,48 @@ for (token_account, mint) in [
             &[bump], 
         ]], 
     )?; 
-}",Error fetching AI explanation: list index out of range,Medium,Use transfer and allocate instead of create_account similar to what Anchor does.,"https://file.notion.so/f/f/97ab6450-64d1-4350-a5cf-a0c0c607f5c4/d490abb1-acff-4638-973f-203664bccf1c/ellipsis_phoenix_audit_final.pdf?table=block&id=9888c291-939f-4def-bbb3-77a165bd9230&spaceId=97ab6450-64d1-4350-a5cf-a0c0c607f5c4&expirationTimestamp=1743048000000&signature=Q30qii9Z1NRF6BOaqE6ZgfVAvxgDTNp91YjhzAWfRFs&downloadName=ellipsis_phoenix_audit_final.pdf, https://github.com/Ellipsis-Labs/phoenix-v1/pull/1/files",High
+}","pub async fn parse_events_from_transaction(
+    &self,
+    sig: &Signature,
+) -> Option<Vec<PhoenixEvent>> {
+    let tx = self.client.get_transaction(sig).await.ok()?;
+
+    if tx.is_err {
+        return None;
+    }
+
+    let mut event_list = vec![];
+
+    for inner_ixs in tx.inner_instructions.iter() {
+        for inner_ix in inner_ixs.iter() {
+            let current_program_id = inner_ix.instruction.program_id.clone();
+
+            if current_program_id != phoenix::id().to_string() {
+                continue;
+            }
+
+            if inner_ix.instruction.data.is_empty() {
+                continue;
+            }
+
+            let (tag, data) = match inner_ix.instruction.data.split_first() {
+                Some((tag, data)) => (*tag, data),
+                None => continue,
+            };
+
+            let ix_enum = match PhoenixInstruction::try_from(tag).ok() {
+                Some(ix) => ix,
+                None => continue,
+            };
+
+            if matches!(ix_enum, PhoenixInstruction::Log) {
+                event_list.push(data.to_vec());
+            }
+        }
+    }
+
+    self.parse_phoenix_events(sig, event_list)
+}",Medium,Use transfer and allocate instead of create_account similar to what Anchor does.,"https://file.notion.so/f/f/97ab6450-64d1-4350-a5cf-a0c0c607f5c4/d490abb1-acff-4638-973f-203664bccf1c/ellipsis_phoenix_audit_final.pdf?table=block&id=9888c291-939f-4def-bbb3-77a165bd9230&spaceId=97ab6450-64d1-4350-a5cf-a0c0c607f5c4&expirationTimestamp=1743048000000&signature=Q30qii9Z1NRF6BOaqE6ZgfVAvxgDTNp91YjhzAWfRFs&downloadName=ellipsis_phoenix_audit_final.pdf, https://github.com/Ellipsis-Labs/phoenix-v1/pull/1/files",High
 Sol-239,"Unchecked Type Casting. In the get_delta_amount_0_signed function, there are unchecked conversions from u64 (which get_delta_amount_0_unsigned returns) to i64. The issue is that the value of the u64 returned by get_delta_amount_0_unsigned might be larger than what i64 can represent, which would result in a faulty conversion. The same applies for get_delta_amount_1_signed. We prepared a simple proof of concept test case demonstrating that this could be exploited against the burn liquidity instruction.",Error fetching AI explanation: list index out of range,"rust
 /// Helper function to get signed delta amount_0 for given liquidity and price range 
 pub fn get_delta_amount_0_signed( 
