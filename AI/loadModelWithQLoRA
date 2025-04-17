@@ -1,0 +1,40 @@
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    BitsAndBytesConfig,
+    TrainingArguments
+)
+from peft import LoraConfig, prepare_model_for_kbit_training
+from trl import SFTTrainer
+import torch
+from datasets import load_dataset
+
+dataset = load_dataset("csv", data_files="AI\TrainingData\vulnerabilities_modified.csv")  # Replace with your dataset
+dataset = dataset["train"].train_test_split(test_size=0.1)  # 90-10 split
+
+
+# Model ID (DeepSeek-Coder 6.7B)
+model_id = "deepseek-ai/deepseek-coder-6.7b-base"
+
+# 4-bit Quantization Config
+bnb_config = BitsAndBytesConfig(
+    load_in_4bit=True,
+    bnb_4bit_quant_type="nf4",
+    bnb_4bit_compute_dtype=torch.float16,
+    bnb_4bit_use_double_quant=True,
+)
+
+# Load Model
+model = AutoModelForCausalLM.from_pretrained(
+    model_id,
+    quantization_config=bnb_config,
+    device_map="auto",
+    trust_remote_code=True
+)
+
+# Load Tokenizer
+tokenizer = AutoTokenizer.from_pretrained(model_id)
+tokenizer.pad_token = tokenizer.eos_token  # Set pad token
+
+# Prepare model for QLoRA training
+model = prepare_model_for_kbit_training(model)
