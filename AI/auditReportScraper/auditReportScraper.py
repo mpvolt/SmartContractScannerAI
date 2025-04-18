@@ -1,42 +1,63 @@
 import fitz  # PyMuPDF
+import re
+import json
+import sys
 
-def extract_findings_from_pdf(pdf_path):
-    findings_sections = []
-    keywords = ['findings', 'vulnerabilities']
-    capture = False
+def extract_text_from_pdf(pdf_path):
+    doc = fitz.open(pdf_path)
+    text = ""
+    for page in doc:
+        text += page.get_text()
+    return text
 
-    with fitz.open(pdf_path) as doc:
-        for page_num in range(len(doc)):
-            page_text = doc[page_num].get_text()
-            lines = page_text.split('\n')
+def extract_vulnerabilities_from_text(text):
+    # Find the 'Vulnerabilities' section
+    pattern_vuln_section = re.compile(r'(Vulnerabilities.*?)(?:\n[A-Z][^\n]*Section|\Z)', re.DOTALL | re.IGNORECASE)
+    section_match = pattern_vuln_section.search(text)
+    if not section_match:
+        print("No 'Vulnerabilities' section found.")
+        return []
+    vuln_section = section_match.group(1)
 
-            for line in lines:
-                lower_line = line.lower().strip()
+    # Regex for individual vulnerabilities
+    pattern = re.compile(
+        r"(?P<header>OS-SSP-[A-Z\-]+-\d{2} \[[^\]]+\] \[[^\]]+\] \| [^\n]+)\n"
+        r"Description\n(?P<description>.*?)(?=\n(?:Remediation\n|Patch\n|OS-SSP|$))"
+        r"(?:\nRemediation\n(?P<remediation>.*?)(?=\n(?:Patch\n|OS-SSP|$)))?"
+        r"(?:\nPatch\n(?P<patch>.*?)(?=\nOS-SSP|$))?",
+        re.DOTALL
+    )
 
-                # Check if we’re entering a findings/vulnerabilities section
-                if any(kw in lower_line for kw in keywords):
-                    capture = True
+    vulnerabilities = []
+    for match in pattern.finditer(vuln_section):
+        id_line = match.group('header').strip()
+        description = match.group('description').strip() if match.group('description') else None
+        remediation = match.group('remediation').strip() if match.group('remediation') else None
+        patch = match.group('patch').strip() if match.group('patch') else None
 
-                # Heuristic to detect leaving the section (new major section or summary)
-                elif capture and (
-                    lower_line.startswith('conclusion') or 
-                    lower_line.startswith('recommendations') or
-                    lower_line.startswith('appendix') or 
-                    lower_line.strip() == ''
-                ):
-                    capture = False
+        # Parse the header line
+        id_status_pattern = re.compile(r"^(OS-SSP-[A-Z\-]+-\d{2}) \[([^\]]+)\] \[([^\]]+)\] \| (.+)$")
+        match_id = id_status_pattern.match(id_line)
+        if not match_id:
+            continue
+        issue_id, severity, status, title = match_id.groups()
 
-                if capture:
-                    findings_sections.append(line)
+        vulnerabilities.append({
+            "id": issue_id,
+            "severity": severity,
+            "status": status,
+            "title": title,
+            "description": description,
+            "remediation": remediation,
+            "patch": patch,
+        })
+    return vulnerabilities
 
-    return '\n'.join(findings_sections)
-
-# Usage
-pdf_file = "Yieldly_Finance_Bridge_Algorand_Smart_Contract_Security_Audit_Halborn_v_1_1.pdf"
-findings_text = extract_findings_from_pdf(pdf_file)
-
-# Save output or print
-with open("findings_output.txt", "w") as f:
-    f.write(findings_text)
-
-print("Findings extracted successfully.")
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("Usage: python3 extract_vulnerabilities_from_pdf.py <audit.pdf>")
+        sys.exit(1)
+    pdf_path = sys.argv[1]
+    text = extract_text_from_pdf(pdf_path)
+    vulns = extract_vulnerabilities_from_text(text)
+    print(json.dumps(vulns, indent=2))
